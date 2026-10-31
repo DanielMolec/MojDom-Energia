@@ -182,8 +182,9 @@ public class MainActivity extends Activity {
     private void updateRooms(){
         for(String id:roomViews.keySet()){
             TextView[] views=roomViews.get(id);views[0].setText(roomName(id));
-            JSONObject state=states.get(id);String raw=state==null?"":state.optString("state","");
-            double value;try{value=Double.parseDouble(raw);if(!Double.isFinite(value))throw new NumberFormatException();}catch(Exception e){views[1].setText("—");views[2].setText(state==null?"Brak encji w Home Assistant":"Czujnik niedostępny");continue;}
+            String raw = getTemperature(id);
+            double value;try{value=Double.parseDouble(raw);if(!Double.isFinite(value))throw new NumberFormatException();}catch(Exception e){views[1].setText("—");views[2].setText(states.get(id)==null?"Brak encji w Home Assistant":"Czujnik niedostępny");continue;}
+            JSONObject state = states.get(id);
             JSONObject attrs=state.optJSONObject("attributes");String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
             views[1].setText(String.format(new Locale("pl","PL"),"%.1f",value)+" "+unit);
             String date=state.optString("last_updated","");
@@ -191,13 +192,39 @@ public class MainActivity extends Activity {
             views[2].setText("Aktualizacja czujnika: "+date);
         }
     }
+
+    // Nowa metoda pomocnicza do wyciągania temperatury z sensorów i termostatów (climate)
+    private String getTemperature(String id) {
+        JSONObject s = states.get(id);
+        if (s == null) return null;
+        if (id.startsWith("sensor.")) {
+            return s.optString("state", "");
+        }
+        if (id.startsWith("climate.")) {
+            JSONObject attrs = s.optJSONObject("attributes");
+            if (attrs != null && attrs.has("current_temperature")) {
+                return attrs.optString("current_temperature");
+            }
+        }
+        return null;
+    }
+
     private void chooseRooms(){
         if(states.isEmpty()){new AlertDialog.Builder(this).setMessage("Najpierw połącz aplikację z Home Assistant i poczekaj na odczyt czujników.").setPositiveButton("OK",null).show();return;}
         Set<String> chosen=selectedRooms();ArrayList<String> ids=new ArrayList<>();
         for(String id:states.keySet()){
-            JSONObject attrs=states.get(id).optJSONObject("attributes");
-            String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
-            if(id.startsWith("sensor.")&&attrs!=null&&("temperature".equals(attrs.optString("device_class"))||"°C".equals(unit)||"°F".equals(unit)))ids.add(id);
+            JSONObject state = states.get(id);
+            JSONObject attrs = state.optJSONObject("attributes");
+            String unit = attrs==null?"":attrs.optString("unit_of_measurement","");
+            
+            // Zwykłe sensory temperatury
+            boolean isTempSensor = id.startsWith("sensor.") && attrs != null && 
+                ("temperature".equals(attrs.optString("device_class")) || "°C".equals(unit) || "°F".equals(unit));
+            
+            // Termostaty (climate), które mają aktualną temperaturę
+            boolean isClimate = id.startsWith("climate.") && attrs != null && attrs.has("current_temperature");
+            
+            if (isTempSensor || isClimate) ids.add(id);
         }
         for(String id:chosen)if(!ids.contains(id))ids.add(id);
         ids.sort((a,b)->roomName(a).compareToIgnoreCase(roomName(b)));
