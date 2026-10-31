@@ -1,7 +1,9 @@
 plugins { id 'com.android.application' }
+
 android {
     namespace 'pl.mojdom.energia'
     compileSdk 35
+
     defaultConfig {
         applicationId 'pl.mojdom.energia'
         minSdk 26
@@ -9,6 +11,29 @@ android {
         versionCode 2
         versionName '1.1'
     }
+
+    signingConfigs {
+        release {
+            storeFile file(System.getenv("KEYSTORE_FILE") ?: "mojdom-release.jks")
+            storePassword System.getenv("KEYSTORE_PASSWORD")
+            keyAlias System.getenv("KEY_ALIAS")
+            keyPassword System.getenv("KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Opcjonalnie: pozwala budować podpisany debug lokalnie, jeśli masz zmienne środowiskowe
+            if (System.getenv("KEYSTORE_PASSWORD") != null) {
+                signingConfig signingConfigs.release
+            }
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
