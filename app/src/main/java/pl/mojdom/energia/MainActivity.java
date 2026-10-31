@@ -15,7 +15,7 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 
 public class MainActivity extends Activity {
-    private static final int BG=Color.rgb(10,24,34), CARD=Color.rgb(22,42,54), TEXT=Color.rgb(239,246,250), MUTED=Color.rgb(161,184,197), GREEN=Color.rgb(70,213,170);
+    private static final int BG=Color.rgb(243,246,250), CARD=Color.WHITE, TEXT=Color.rgb(24,39,58), MUTED=Color.rgb(100,116,139), GREEN=Color.rgb(13,139,118);
     // Default IDs follow the user's supplied HA configuration; all can be edited.
     private final String[][] metrics={
         {"Gaz", "Gaz chwilowo", "sensor.ebus_zuzycie_gazu_chwilowe_szacowane"},
@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
         {"Kocioł", "Powrót", "sensor.ebusd_bai_status01_temp_1"},
         {"Kocioł", "Ciśnienie", "sensor.cisnienie_instalacji"},
         {"Kocioł", "Krzywa grzewcza", "sensor.krzywa_grzewcza"},
-        {"Kocioł", "Temperatura w domu", "sensor.e7c_temperatura_pokojowa"},
+        {"Kocioł", "Temperatura w domu", "sensor.heating_ebusd_e7c_temperatura_na_korytarzu"},
         {"Kocioł", "Temperatura zadana", "input_number.e7c_temp_set"},
         {"Kocioł", "Temperatura zewnętrzna", "sensor.ebusd_broadcast_outsidetemp"},
         {"Kocioł", "Starty palnika / godz.", "sensor.ebus_starty_palnika_ostatnia_godzina"},
@@ -47,10 +47,12 @@ public class MainActivity extends Activity {
     private final Map<String,JSONObject> states=new HashMap<>();
     private android.content.SharedPreferences prefs;
     private TokenStore secrets;
-    private String base="",token="",tab="Gaz";
+    private String base="",token="",tab="Dom";
     private boolean active=false,busy=false,configured=false,settingsOpen=false;
     private int generation=0;
     private TextView connection;
+    private final Map<String,TextView[]> roomViews=new LinkedHashMap<>();
+    private final Map<String,Button> tabButtons=new HashMap<>();
     private LinearLayout root,body;
     private String lastSuccess="";
     private final Runnable ticker=new Runnable(){public void run(){if(active){refresh();handler.postDelayed(this,5000);}}};
@@ -67,40 +69,43 @@ public class MainActivity extends Activity {
     @Override public void onPause(){active=false;handler.removeCallbacks(ticker);super.onPause();}
     @Override public void onDestroy(){worker.shutdownNow();super.onDestroy();}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
-    private TextView text(String t,int size,int color){TextView v=new TextView(this);v.setText(t);v.setTextSize(size);v.setTextColor(color);return v;}
+    private TextView text(String t,int size,int color){TextView v=new TextView(this);v.setTypeface(Typeface.create("sans-serif",Typeface.NORMAL));v.setText(t);v.setTextSize(size);v.setTextColor(color);return v;}
     private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
     private GradientDrawable shape(int color){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(18));return d;}
-    private Button button(String title,Runnable r){Button b=new Button(this);b.setText(title);b.setTextColor(TEXT);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));b.setOnClickListener(v->r.run());return b;}
+    private Button button(String title,Runnable r){Button b=new Button(this);b.setText(title);b.setAllCaps(false);b.setTextSize(13);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));b.setTextColor(TEXT);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));b.setOnClickListener(v->r.run());return b;}
     private String entity(int i){return prefs.getString("entity_"+i,metrics[i][2]).trim();}
     private void dashboard(){
-        settingsOpen=false;values.clear();details.clear();
+        settingsOpen=false;values.clear();details.clear();tabButtons.clear();
         root=column();root.setBackgroundColor(BG);root.setPadding(dp(18),dp(12),dp(18),dp(8));
         root.setOnApplyWindowInsetsListener((v,insets)->{root.setPadding(dp(18),dp(12)+insets.getSystemWindowInsetTop(),dp(18),dp(8)+insets.getSystemWindowInsetBottom());return insets;});
         setContentView(root);root.requestApplyInsets();
         LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title=text("Mój Dom\nENERGIA",25,TEXT);title.setTypeface(null,Typeface.BOLD);
+        TextView title=text("Mój Dom",25,TEXT);title.setTypeface(null,Typeface.BOLD);
         header.addView(title,new LinearLayout.LayoutParams(0,-2,1));header.addView(button("Ustawienia",this::settings));root.addView(header);
         connection=text(configured?"Łączenie…":"Ustaw połączenie z Home Assistant",13,MUTED);connection.setPadding(0,dp(10),0,dp(12));root.addView(connection);
         HorizontalScrollView tabs=new HorizontalScrollView(this);tabs.setHorizontalScrollBarEnabled(false);LinearLayout row=new LinearLayout(this);
-        for(String name:new String[]{"Gaz","Prąd","Kocioł","Serwis"}){Button b=button(name,()->{tab=name;render();});row.addView(b);}
+        for(String name:new String[]{"Dom","Gaz","Prąd","Kocioł","Serwis"}){Button b=button(name,()->{tab=name;render();});tabButtons.put(name,b);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,dp(48));bp.rightMargin=dp(6);row.addView(b,bp);}
         tabs.addView(row);root.addView(tabs);
         ScrollView scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(text("Podgląd • odświeżanie co 5 s przy otwartej aplikacji",11,MUTED));render();
     }
     private void render(){
-        if(body==null)return;body.removeAllViews();values.clear();details.clear();
+        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();
+        for(String name:tabButtons.keySet()){Button b=tabButtons.get(name);boolean selected=name.equals(tab);b.setTextColor(selected?Color.WHITE:TEXT);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(selected?accent():CARD));}
+        if(tab.equals("Dom")){renderRooms();return;}
         TextView title=text(tab,28,TEXT);title.setPadding(0,dp(14),0,dp(8));body.addView(title);
         String note=tab.equals("Gaz")?"Zużycie szacowane z pracy kotła. Dotknij wartości, aby zobaczyć historię 24 h.":tab.equals("Prąd")?"Dane Taurona mogą być opóźnione. Koszty pobieramy z Twoich sensorów HA.":tab.equals("Serwis")?"Statusy z Home Assistant. Ta wersja nie wysyła powiadomień w tle.":"Odczyty z Home Assistant. Aplikacja nie zmienia nastaw kotła.";
         TextView n=text(note,13,MUTED);n.setPadding(0,0,0,dp(12));body.addView(n);
         for(int i=0;i<metrics.length;i++)if(metrics[i][0].equals(tab)){
-            final int index=i;LinearLayout c=column();c.setPadding(dp(18),dp(14),dp(18),dp(14));c.setBackground(shape(CARD));
+            final int index=i;LinearLayout c=column();c.setPadding(dp(18),dp(14),dp(18),dp(14));c.setBackground(shape(CARD));c.setElevation(dp(1));
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(10);body.addView(c,lp);
-            c.addView(text(metrics[i][1],14,MUTED));TextView val=text("—",28,GREEN);c.addView(val);values.put(i,val);
+            c.addView(text(metrics[i][1],14,MUTED));TextView val=text("—",32,accent());c.addView(val);values.put(i,val);
             TextView sub=text("Oczekiwanie na dane",11,MUTED);c.addView(sub);details.put(i,sub);c.setOnClickListener(v->history(index));
         }
         updateCards();
     }
     private void updateCards(){
+        updateRooms();
         for(Integer i:values.keySet()){
             JSONObject s=states.get(entity(i));String state=s==null?"":s.optString("state","");
             if(s==null||state.equals("unknown")||state.equals("unavailable")){
@@ -114,6 +119,76 @@ public class MainActivity extends Activity {
             details.get(i).setText("Aktualizacja encji: "+date);
         }
     }
+
+    private int accent(){
+        return tab.equals("Gaz")?Color.rgb(184,94,28):tab.equals("Prąd")?Color.rgb(65,99,215):tab.equals("Kocioł")?Color.rgb(143,77,190):GREEN;
+    }
+    private Set<String> selectedRooms(){
+        if(prefs.contains("rooms"))return new TreeSet<>(prefs.getStringSet("rooms",Collections.emptySet()));
+        return new TreeSet<>(Collections.singleton(entity(14)));
+    }
+    private String roomName(String id){
+        String custom=prefs.getString("room_name_"+id,"").trim();
+        if(!custom.isEmpty())return custom;
+        if(id.equals("sensor.heating_ebusd_e7c_temperatura_na_korytarzu"))return "Korytarz";
+        JSONObject state=states.get(id), attrs=state==null?null:state.optJSONObject("attributes");
+        return attrs==null?id:attrs.optString("friendly_name",id);
+    }
+    private void renderRooms(){
+        LinearLayout hero=column();hero.setPadding(dp(22),dp(22),dp(22),dp(22));
+        GradientDrawable gradient=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{Color.rgb(18,91,92),Color.rgb(21,133,114)});
+        gradient.setCornerRadius(dp(24));hero.setBackground(gradient);
+        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);hp.topMargin=dp(18);hp.bottomMargin=dp(18);body.addView(hero,hp);
+        hero.addView(text("TWÓJ DOM",12,Color.rgb(182,231,221)));
+        TextView heading=text("Temperatury w domu",27,Color.WHITE);heading.setTypeface(Typeface.create("sans-serif-medium",0));heading.setPadding(0,dp(8),0,dp(8));hero.addView(heading);
+        hero.addView(text("Odczyty z wybranych pomieszczeń • co 5 s",13,Color.WHITE));
+        body.addView(button("Wybierz pomieszczenia",this::chooseRooms));
+        TextView help=text("Dotknij karty, aby zobaczyć historię. Przytrzymaj, aby nadać nazwę pomieszczenia.",13,MUTED);help.setPadding(0,dp(10),0,dp(16));body.addView(help);
+        for(String id:selectedRooms()){
+            LinearLayout card=column();card.setPadding(dp(20),dp(18),dp(20),dp(18));card.setBackground(shape(CARD));card.setElevation(dp(1));
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(12);body.addView(card,cp);
+            TextView name=text(roomName(id),16,TEXT);card.addView(name);
+            TextView value=text("—",36,GREEN);value.setTypeface(Typeface.create("sans-serif-medium",0));card.addView(value);
+            TextView updated=text("Oczekiwanie na dane",12,MUTED);card.addView(updated);
+            roomViews.put(id,new TextView[]{name,value,updated});
+            card.setOnClickListener(v->history(id,roomName(id)));
+            card.setOnLongClickListener(v->{EditText label=new EditText(this);label.setText(roomName(id));label.setSingleLine(true);
+                new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();return true;});
+        }
+        if(roomViews.isEmpty())body.addView(text("Dodaj czujniki przyciskiem „Wybierz pomieszczenia”.",16,MUTED));
+        updateRooms();
+    }
+    private void updateRooms(){
+        for(String id:roomViews.keySet()){
+            TextView[] views=roomViews.get(id);views[0].setText(roomName(id));
+            JSONObject state=states.get(id);String raw=state==null?"":state.optString("state","");
+            double value;try{value=Double.parseDouble(raw);if(!Double.isFinite(value))throw new NumberFormatException();}catch(Exception e){views[1].setText("—");views[2].setText(state==null?"Brak encji w Home Assistant":"Czujnik niedostępny");continue;}
+            JSONObject attrs=state.optJSONObject("attributes");String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
+            views[1].setText(String.format(new Locale("pl","PL"),"%.1f",value)+" "+unit);
+            String date=state.optString("last_updated","");
+            try{date=OffsetDateTime.parse(date).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM • HH:mm"));}catch(Exception ignored){}
+            views[2].setText("Aktualizacja czujnika: "+date);
+        }
+    }
+    private void chooseRooms(){
+        if(states.isEmpty()){new AlertDialog.Builder(this).setMessage("Najpierw połącz aplikację z Home Assistant i poczekaj na odczyt czujników.").setPositiveButton("OK",null).show();return;}
+        Set<String> chosen=selectedRooms();ArrayList<String> ids=new ArrayList<>();
+        for(String id:states.keySet()){
+            JSONObject attrs=states.get(id).optJSONObject("attributes");
+            String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
+            if(id.startsWith("sensor.")&&attrs!=null&&("temperature".equals(attrs.optString("device_class"))||"°C".equals(unit)||"°F".equals(unit)))ids.add(id);
+        }
+        for(String id:chosen)if(!ids.contains(id))ids.add(id);
+        ids.sort((a,b)->roomName(a).compareToIgnoreCase(roomName(b)));
+        CharSequence[] labels=new CharSequence[ids.size()];boolean[] checks=new boolean[ids.size()];
+        for(int i=0;i<ids.size();i++){String id=ids.get(i);labels[i]=roomName(id)+"
+"+id;checks[i]=chosen.contains(id);}
+        new AlertDialog.Builder(this).setTitle("Wybierz temperatury pomieszczeń")
+            .setMultiChoiceItems(labels,checks,(d,index,checked)->{if(checked)chosen.add(ids.get(index));else chosen.remove(ids.get(index));})
+            .setPositiveButton("Zapisz",(d,w)->{prefs.edit().putStringSet("rooms",new HashSet<>(chosen)).apply();render();})
+            .setNegativeButton("Anuluj",null).show();
+    }
+
     private void refresh(){
         if(!configured||busy||settingsOpen)return;busy=true;final int g=generation;final String url=base,t=token;
         worker.execute(()->{
@@ -154,10 +229,14 @@ public class MainActivity extends Activity {
     }
     private void history(int i){
         if(!configured){settings();return;}
-        final String id=entity(i),url=base,t=token;final int g=generation;
+        history(entity(i),metrics[i][1]);
+    }
+    private void history(String id,String label){
+        if(!configured){settings();return;}
+        final String url=base,t=token;final int g=generation;
         LinearLayout content=column();content.setPadding(dp(16),dp(12),dp(16),dp(16));
         TextView info=text("Pobieranie historii 24 h…",14,Color.DKGRAY);content.addView(info);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(metrics[i][1]+" • 24 h").setView(content).setPositiveButton("Zamknij",null).create();dialog.show();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(label+" • 24 h").setView(content).setPositiveButton("Zamknij",null).create();dialog.show();
         worker.execute(()->{try{
             Instant from=Instant.now().minusSeconds(86400);
             String path="/api/history/period/"+from.toString()+"?filter_entity_id="+id+"&minimal_response&no_attributes";
