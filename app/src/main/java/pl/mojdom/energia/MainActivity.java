@@ -39,7 +39,9 @@ public class MainActivity extends Activity {
         {"Serwis", "Termin serwisu", "sensor.e7c_termin_serwisu"},
         {"Serwis", "Pozostało dni", "sensor.e7c_pozostalo_dni_do_serwisu"},
         {"Serwis", "Serwis wymagany", "binary_sensor.e7c_serwis_wymagany"},
-        {"Serwis", "Stan techniczny — problem", "binary_sensor.ebus_stan_techniczny_kotla"}
+        {"Serwis", "Stan techniczny — problem", "binary_sensor.ebus_stan_techniczny_kotla"},
+        {"Kocioł", "Moc kotła", ""},
+        {"Kocioł", "Moc pompy", ""}
     };
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
@@ -100,14 +102,15 @@ public class MainActivity extends Activity {
             final int index=i;LinearLayout c=column();c.setPadding(dp(18),dp(14),dp(18),dp(14));c.setBackground(shape(CARD));c.setElevation(dp(1));
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(10);body.addView(c,lp);
             c.addView(text(metrics[i][1],14,MUTED));TextView val=text("—",32,accent());c.addView(val);values.put(i,val);
-            TextView sub=text("Oczekiwanie na dane",11,MUTED);c.addView(sub);details.put(i,sub);c.setOnClickListener(v->history(index));
+            TextView sub=text("Oczekiwanie na dane",11,MUTED);c.addView(sub);details.put(i,sub);c.setOnClickListener(v->{if(entity(index).isEmpty())chooseMetric(index);else history(index);});c.setOnLongClickListener(v->{chooseMetric(index);return true;});
         }
         updateCards();
     }
     private void updateCards(){
         updateRooms();
         for(Integer i:values.keySet()){
-            JSONObject s=states.get(entity(i));String state=s==null?"":s.optString("state","");
+            if(entity(i).isEmpty()){values.get(i).setText("Wybierz czujnik");values.get(i).setTextSize(22);details.get(i).setText("Dotknij, aby połączyć z Home Assistant");continue;}
+            values.get(i).setTextSize(32);JSONObject s=states.get(entity(i));String state=s==null?"":s.optString("state","");
             if(s==null||state.equals("unknown")||state.equals("unavailable")){
                 values.get(i).setText("—");details.get(i).setText(s==null?"Brak encji — sprawdź identyfikator w ustawieniach":"Czujnik niedostępny");continue;
             }
@@ -118,6 +121,24 @@ public class MainActivity extends Activity {
             try{date=OffsetDateTime.parse(date).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM HH:mm:ss"));}catch(Exception ignored){}
             details.get(i).setText("Aktualizacja encji: "+date);
         }
+    }
+
+
+    private void chooseMetric(int index){
+        if(states.isEmpty()){Toast.makeText(this,"Poczekaj na połączenie z Home Assistant",Toast.LENGTH_LONG).show();return;}
+        LinearLayout form=column();form.setPadding(dp(16),dp(8),dp(16),0);
+        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("Szukaj: moc, power, pompa…");form.addView(search);
+        ListView list=new ListView(this);form.addView(list,new LinearLayout.LayoutParams(-1,dp(320)));
+        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(id.startsWith("sensor.")||id.startsWith("number."))ids.add(id);
+        Collections.sort(ids);ArrayList<String> shown=new ArrayList<>();
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<>());list.setAdapter(adapter);
+        Runnable filter=()->{String q=search.getText().toString().toLowerCase(Locale.ROOT);shown.clear();adapter.clear();
+            for(String id:ids){JSONObject state=states.get(id),attrs=state.optJSONObject("attributes");String label=(attrs==null?id:attrs.optString("friendly_name",id))+" • "+state.optString("state")+" "+(attrs==null?"":attrs.optString("unit_of_measurement",""))+" — "+id;
+                if(label.toLowerCase(Locale.ROOT).contains(q)){shown.add(id);adapter.add(label);}}
+        };filter.run();
+        search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){filter.run();}public void afterTextChanged(android.text.Editable e){}});
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(metrics[index][1]+" — wybierz czujnik").setView(form).setNegativeButton("Anuluj",null).create();
+        list.setOnItemClickListener((parent,view,position,id)->{prefs.edit().putString("entity_"+index,shown.get(position)).apply();dialog.dismiss();render();});dialog.show();
     }
 
     private int accent(){
@@ -219,7 +240,7 @@ public class MainActivity extends Activity {
             String newToken=secret.getText().toString().trim();
             if(!newBase.equals(base)&&newToken.isEmpty()&&!token.isEmpty())throw new Exception("Przy zmianie adresu wpisz ponownie token dla tego serwera.");
             if(newToken.isEmpty())newToken=token;if(newToken.isEmpty())throw new Exception("Wpisz token dostępu.");
-            for(EditText id:ids)if(!id.getText().toString().trim().matches("[a-z0-9_]+\\.[a-z0-9_]+"))throw new Exception("Identyfikatory muszą mieć postać sensor.nazwa lub binary_sensor.nazwa.");
+            for(EditText id:ids)if(!id.getText().toString().trim().isEmpty()&&!id.getText().toString().trim().matches("[a-z0-9_]+\\.[a-z0-9_]+"))throw new Exception("Identyfikatory muszą mieć postać sensor.nazwa lub binary_sensor.nazwa.");
             secrets.save(newToken);android.content.SharedPreferences.Editor edit=prefs.edit().putString("base",newBase).putBoolean("http",http.isChecked());
             for(int i=0;i<ids.size();i++)edit.putString("entity_"+i,ids.get(i).getText().toString().trim());edit.apply();
             base=newBase;token=newToken;configured=true;generation++;states.clear();lastSuccess="";dialog.dismiss();dashboard();refresh();
