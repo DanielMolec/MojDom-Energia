@@ -181,8 +181,7 @@ public class MainActivity extends Activity {
         for(String id:chosen)if(!ids.contains(id))ids.add(id);
         ids.sort((a,b)->roomName(a).compareToIgnoreCase(roomName(b)));
         CharSequence[] labels=new CharSequence[ids.size()];boolean[] checks=new boolean[ids.size()];
-        for(int i=0;i<ids.size();i++){String id=ids.get(i);labels[i]=roomName(id)+"
-"+id;checks[i]=chosen.contains(id);}
+        for(int i=0;i<ids.size();i++){String id=ids.get(i);labels[i]=roomName(id)+"\n"+id;checks[i]=chosen.contains(id);}
         new AlertDialog.Builder(this).setTitle("Wybierz temperatury pomieszczeń")
             .setMultiChoiceItems(labels,checks,(d,index,checked)->{if(checked)chosen.add(ids.get(index));else chosen.remove(ids.get(index));})
             .setPositiveButton("Zapisz",(d,w)->{prefs.edit().putStringSet("rooms",new HashSet<>(chosen)).apply();render();})
