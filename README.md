@@ -4,10 +4,12 @@ Aplikacja Android do odczytu danych Home Assistant. Instrukcja konfiguracji: REA
 
 ## Pobieranie APK
 
-Actions → Build Android APK → zakończone uruchomienie → Artifacts → MojDom-Energia-APK. Rozpakuj ZIP i zainstaluj app-debug.apk na telefonie (Android 8 lub nowszy).
+Actions → Build Android APK → zakończone uruchomienie → Artifacts → MojDom-Energia-APK. Rozpakuj ZIP i zainstaluj app-release.apk na telefonie (Android 8 lub nowszy).
 
-Budowanie uruchamia się po zmianach na main lub ręcznie przez Run workflow. Pierwsze uruchomienie musi zakończyć się sukcesem, zanim APK będzie dostępne.
+Budowanie uruchamia się po zmianach na main lub ręcznie przez Run workflow.
 
-To wersja testowa podpisywana automatycznie. Kolejne uruchomienie na nowym runnerze może użyć innego klucza: aktualizacja wtedy wymaga odinstalowania poprzedniej wersji i ponownej konfiguracji. Przed regularnymi aktualizacjami należy skonfigurować stały klucz podpisu.
+## Aktualizacje
+
+APK jest podpisywany stałym kluczem z GitHub Secrets, a każda kompilacja dostaje wyższy numer wersji (versionCode = 100 + numer uruchomienia). Nowy APK instaluje się więc jako aktualizacja — bez odinstalowania, z zachowaniem adresu, tokenu, wybranych czujników i pomieszczeń. Nie zmieniaj klucza w Secrets: inny klucz wymusza jednorazowe odinstalowanie.
 
 Adres i token Home Assistant wpisuj w aplikacji na telefonie, nie w repozytorium. Odświeżanie co 5 sekund dotyczy odczytu istniejących stanów HA, nie wymusza nowych pomiarów kotła.

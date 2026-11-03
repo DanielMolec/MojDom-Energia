@@ -41,8 +41,15 @@ public class MainActivity extends Activity {
         {"Serwis", "Serwis wymagany", "binary_sensor.e7c_serwis_wymagany"},
         {"Serwis", "Stan techniczny — problem", "binary_sensor.ebus_stan_techniczny_kotla"},
         {"Kocioł", "Moc kotła", ""},
-        {"Kocioł", "Moc pompy", ""}
+        {"Kocioł", "Moc pompy", ""},
+        {"Kocioł", "Obroty wentylatora", ""},
+        {"Kocioł", "Pompa — wysterowanie", ""},
+        {"Kocioł", "Zawór 3-drogowy", ""},
+        {"Kocioł", "Temperatura CWU (zasobnik)", ""}
     };
+    // Indeksy metryk używane na schemacie kotła
+    private static final int M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_OUTSIDE=16,M_FAN=24,M_PUMP=25,M_VALVE=26,M_DHW=27;
+    private BoilerDiagram diagram;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Map<Integer,TextView> values=new HashMap<>(), details=new HashMap<>();
@@ -63,10 +70,12 @@ public class MainActivity extends Activity {
         super.onCreate(b);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);
         prefs=getSharedPreferences("settings",0);secrets=new TokenStore(this);
         base=prefs.getString("base","");
+        tab=prefs.getString("tab","Dom");if(b!=null)tab=b.getString("tab",tab);
         try {token=secrets.read();}catch(Exception e){token="";}
         configured=!base.isEmpty()&&!token.isEmpty();
         dashboard();if(!configured)handler.post(this::settings);
     }
+    @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("tab",tab);}
     @Override public void onResume(){super.onResume();active=true;handler.removeCallbacks(ticker);handler.post(ticker);}
     @Override public void onPause(){active=false;handler.removeCallbacks(ticker);super.onPause();}
     @Override public void onDestroy(){worker.shutdownNow();super.onDestroy();}
@@ -86,18 +95,19 @@ public class MainActivity extends Activity {
         header.addView(title,new LinearLayout.LayoutParams(0,-2,1));header.addView(button("Ustawienia",this::settings));root.addView(header);
         connection=text(configured?"Łączenie…":"Ustaw połączenie z Home Assistant",13,MUTED);connection.setPadding(0,dp(10),0,dp(12));root.addView(connection);
         HorizontalScrollView tabs=new HorizontalScrollView(this);tabs.setHorizontalScrollBarEnabled(false);LinearLayout row=new LinearLayout(this);
-        for(String name:new String[]{"Dom","Gaz","Prąd","Kocioł","Serwis"}){Button b=button(name,()->{tab=name;render();});tabButtons.put(name,b);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,dp(48));bp.rightMargin=dp(6);row.addView(b,bp);}
+        for(String name:new String[]{"Dom","Gaz","Prąd","Kocioł","Serwis"}){Button b=button(name,()->{tab=name;prefs.edit().putString("tab",name).apply();render();});tabButtons.put(name,b);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,dp(48));bp.rightMargin=dp(6);row.addView(b,bp);}
         tabs.addView(row);root.addView(tabs);
         ScrollView scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(text("Podgląd • odświeżanie co 5 s przy otwartej aplikacji",11,MUTED));render();
     }
     private void render(){
-        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();
+        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();diagram=null;
         for(String name:tabButtons.keySet()){Button b=tabButtons.get(name);boolean selected=name.equals(tab);b.setTextColor(selected?Color.WHITE:TEXT);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(selected?accent():CARD));}
         if(tab.equals("Dom")){renderRooms();return;}
         TextView title=text(tab,28,TEXT);title.setPadding(0,dp(14),0,dp(8));body.addView(title);
-        String note=tab.equals("Gaz")?"Zużycie szacowane z pracy kotła. Dotknij wartości, aby zobaczyć historię 24 h.":tab.equals("Prąd")?"Dane Taurona mogą być opóźnione. Koszty pobieramy z Twoich sensorów HA.":tab.equals("Serwis")?"Statusy z Home Assistant. Ta wersja nie wysyła powiadomień w tle.":"Odczyty z Home Assistant. Aplikacja nie zmienia nastaw kotła.";
+        String note=tab.equals("Gaz")?"Zużycie szacowane z pracy kotła. Dotknij wartości, aby zobaczyć historię 24 h.":tab.equals("Prąd")?"Dane Taurona mogą być opóźnione. Koszty pobieramy z Twoich sensorów HA.":tab.equals("Serwis")?"Statusy z Home Assistant. Ta wersja nie wysyła powiadomień w tle.":"Odczyty z Home Assistant. Aplikacja nie zmienia nastaw kotła. Dotknij wartości na schemacie, aby zobaczyć historię; przytrzymaj, aby wybrać czujnik.";
         TextView n=text(note,13,MUTED);n.setPadding(0,0,0,dp(12));body.addView(n);
+        if(tab.equals("Kocioł"))renderDiagram();
         for(int i=0;i<metrics.length;i++)if(metrics[i][0].equals(tab)){
             final int index=i;LinearLayout c=column();c.setPadding(dp(18),dp(14),dp(18),dp(14));c.setBackground(shape(CARD));c.setElevation(dp(1));
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(10);body.addView(c,lp);
@@ -106,8 +116,43 @@ public class MainActivity extends Activity {
         }
         updateCards();
     }
+    private void renderDiagram(){
+        LinearLayout frame=column();frame.setPadding(dp(8),dp(10),dp(8),dp(10));frame.setBackground(shape(Color.rgb(236,241,247)));
+        LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,-2);fp.bottomMargin=dp(12);body.addView(frame,fp);
+        diagram=new BoilerDiagram(this,M_BURNER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW);
+        diagram.setListener(new BoilerDiagram.Listener(){
+            public void onTap(int i){if(entity(i).isEmpty())chooseMetric(i);else history(i);}
+            public void onLongPress(int i){chooseMetric(i);}
+        });
+        frame.addView(diagram,new LinearLayout.LayoutParams(-1,-2));
+    }
+    /** Krótki tekst wartości do etykiety na schemacie. */
+    private String shortValue(int i){
+        if(entity(i).isEmpty())return "wybierz";
+        JSONObject s=states.get(entity(i));if(s==null)return "—";
+        String state=s.optString("state","");
+        if(state.equals("unknown")||state.equals("unavailable")||state.isEmpty())return "—";
+        if(i==M_BURNER)return state.equals("on")?"działa":state.equals("off")?"postój":state;
+        if(state.equals("on"))return "wł.";if(state.equals("off"))return "wył.";
+        JSONObject attrs=s.optJSONObject("attributes");String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
+        try{double v=Double.parseDouble(state);boolean integer=unit.equals("%")||unit.equalsIgnoreCase("rpm")||unit.equalsIgnoreCase("obr/min")||Math.abs(v)>=1000;
+            String num=String.format(new Locale("pl","PL"),integer?"%.0f":"%.1f",v);
+            return num+(unit.isEmpty()?"":(unit.equals("%")?" %":" "+unit));
+        }catch(NumberFormatException e){return state.length()>12?state.substring(0,12)+"…":state;}
+    }
+    private double number(int i){
+        JSONObject s=entity(i).isEmpty()?null:states.get(entity(i));
+        try{return s==null?0:Double.parseDouble(s.optString("state",""));}catch(Exception e){return 0;}
+    }
+    private void updateDiagram(){
+        if(diagram==null)return;
+        for(int i:new int[]{M_BURNER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW})diagram.setValue(i,shortValue(i));
+        JSONObject b=entity(M_BURNER).isEmpty()?null:states.get(entity(M_BURNER));
+        boolean burner=b!=null&&b.optString("state").equals("on");
+        diagram.setState(burner,burner||number(M_PUMP)>0||number(M_FAN)>0);
+    }
     private void updateCards(){
-        updateRooms();
+        updateRooms();updateDiagram();
         for(Integer i:values.keySet()){
             if(entity(i).isEmpty()){values.get(i).setText("Wybierz czujnik");values.get(i).setTextSize(22);details.get(i).setText("Dotknij, aby połączyć z Home Assistant");continue;}
             values.get(i).setTextSize(32);JSONObject s=states.get(entity(i));String state=s==null?"":s.optString("state","");
@@ -129,7 +174,7 @@ public class MainActivity extends Activity {
         LinearLayout form=column();form.setPadding(dp(16),dp(8),dp(16),0);
         EditText search=new EditText(this);search.setSingleLine(true);search.setHint("Szukaj: moc, power, pompa…");form.addView(search);
         ListView list=new ListView(this);form.addView(list,new LinearLayout.LayoutParams(-1,dp(320)));
-        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(id.startsWith("sensor.")||id.startsWith("number."))ids.add(id);
+        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(id.startsWith("sensor.")||id.startsWith("binary_sensor.")||id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("input_boolean.")||id.startsWith("switch."))ids.add(id);
         Collections.sort(ids);ArrayList<String> shown=new ArrayList<>();
         ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<>());list.setAdapter(adapter);
         Runnable filter=()->{String q=search.getText().toString().toLowerCase(Locale.ROOT);shown.clear();adapter.clear();
@@ -267,12 +312,15 @@ public class MainActivity extends Activity {
             String newToken=secret.getText().toString().trim();
             if(!newBase.equals(base)&&newToken.isEmpty()&&!token.isEmpty())throw new Exception("Przy zmianie adresu wpisz ponownie token dla tego serwera.");
             if(newToken.isEmpty())newToken=token;if(newToken.isEmpty())throw new Exception("Wpisz token dostępu.");
-            for(EditText id:ids)if(!id.getText().toString().trim().isEmpty()&&!id.getText().toString().trim().matches("[a-z0-9_]+\\.[a-z0-9_]+"))throw new Exception("Identyfikatory muszą mieć postać sensor.nazwa lub binary_sensor.nazwa.");
+            for(EditText id:ids)if(!id.getText().toString().trim().isEmpty()&&!id.getText().toString().trim().matches("[a-z0-9_]+\\.[a-z0-9_]+"))throw new Exception("Identyfikatory muszą mieć postać domena.nazwa, np. sensor.nazwa lub binary_sensor.nazwa.");
             secrets.save(newToken);android.content.SharedPreferences.Editor edit=prefs.edit().putString("base",newBase).putBoolean("http",http.isChecked());
             for(int i=0;i<ids.size();i++)edit.putString("entity_"+i,ids.get(i).getText().toString().trim());edit.apply();
             base=newBase;token=newToken;configured=true;generation++;states.clear();lastSuccess="";dialog.dismiss();dashboard();refresh();
         }catch(Exception e){new AlertDialog.Builder(this).setMessage(e.getMessage()).setPositiveButton("OK",null).show();}});
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{secrets.clear();token="";configured=false;generation++;states.clear();lastSuccess="";dialog.dismiss();dashboard();connection.setText("Wylogowano");});
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Wylogować?")
+            .setMessage("Zapisany token zostanie usunięty z telefonu. Adres i wybrane czujniki pozostaną. Aby ponownie się połączyć, trzeba będzie wpisać token.")
+            .setPositiveButton("Wyloguj",(d,w)->{secrets.clear();token="";configured=false;generation++;states.clear();lastSuccess="";dialog.dismiss();dashboard();connection.setText("Wylogowano");})
+            .setNegativeButton("Anuluj",null).show());
     }
     private void history(int i){
         if(!configured){settings();return;}
@@ -286,12 +334,16 @@ public class MainActivity extends Activity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(label+" • 24 h").setView(content).setPositiveButton("Zamknij",null).create();dialog.show();
         worker.execute(()->{try{
             Instant from=Instant.now().minusSeconds(86400);
-            String path="/api/history/period/"+from.toString()+"?filter_entity_id="+id+"&minimal_response&no_attributes";
+            boolean climate=id.startsWith("climate.");
+            // Termostat: temperatura jest w atrybucie current_temperature, więc atrybuty muszą być pobrane
+            String path="/api/history/period/"+from.toString()+"?filter_entity_id="+java.net.URLEncoder.encode(id,"UTF-8")+(climate?"&significant_changes_only=0":"&minimal_response&no_attributes");
             JSONArray groups=new JSONArray(HaClient.get(url,t,path));JSONArray rows=groups.length()==0?new JSONArray():groups.getJSONArray(0);
             ArrayList<float[]> points=new ArrayList<>();
-            for(int j=0;j<rows.length();j++){JSONObject s=rows.getJSONObject(j);String value=s.optString("state","");try{
+            for(int j=0;j<rows.length();j++){JSONObject s=rows.getJSONObject(j);String value=s.optString("state","");
+                if(climate){JSONObject a=s.optJSONObject("attributes");value=a==null||a.isNull("current_temperature")?"":a.optString("current_temperature","");}
+                try{
                 double val=value.equals("on")?1:value.equals("off")?0:Double.parseDouble(value);
-                double timestamp=OffsetDateTime.parse(s.optString("last_changed",s.optString("last_updated",""))).toInstant().toEpochMilli()/1000.;
+                double timestamp=OffsetDateTime.parse(climate?s.optString("last_updated",s.optString("last_changed","")):s.optString("last_changed",s.optString("last_updated",""))).toInstant().toEpochMilli()/1000.;
                 if(Double.isFinite(val))points.add(new float[]{(float)(timestamp-from.getEpochSecond()),(float)val});
             }catch(Exception ignored){}}
             handler.post(()->{if(g!=generation||isDestroyed()||!dialog.isShowing())return;
