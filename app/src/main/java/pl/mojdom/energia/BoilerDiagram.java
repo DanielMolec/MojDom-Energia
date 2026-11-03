@@ -30,15 +30,16 @@ final class BoilerDiagram extends View {
     private boolean burnerOn = false, flowing = false;
     private float phase = 0, scale = 1;
 
-    BoilerDiagram(Context c, int burner, int flow, int fan, int pump, int valve, int ret, int house, int outside, int dhw) {
+    BoilerDiagram(Context c, int burner, int power, int flow, int fan, int pump, int valve, int ret, int house, int outside, int dhw) {
         super(c);
-        labels.add(new Label(burner, 55, 30, STATUS));
+        labels.add(new Label(burner, 44, 30, STATUS));
+        labels.add(new Label(power, 116, 30, HOT));
         labels.add(new Label(flow, 57, 110, HOT));
         labels.add(new Label(fan, 46, 172, NEUTRAL));
         labels.add(new Label(pump, 124, 170, NEUTRAL));
         labels.add(new Label(valve, 182, 170, HOT));
         labels.add(new Label(ret, 76, 244, COLD));
-        labels.add(new Label(dhw, 185, 32, HOT));
+        labels.add(new Label(dhw, 194, 32, HOT));
         labels.add(new Label(house, 360, 100, NEUTRAL));
         labels.add(new Label(outside, 455, 22, COLD));
         txt.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));

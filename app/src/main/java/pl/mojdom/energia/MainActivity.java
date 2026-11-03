@@ -48,8 +48,8 @@ public class MainActivity extends Activity {
         {"Kocioł", "Temperatura CWU (zasobnik)", ""}
     };
     // Indeksy metryk używane na schemacie kotła
-    private static final int M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_OUTSIDE=16,M_FAN=24,M_PUMP=25,M_VALVE=26,M_DHW=27;
-    private BoilerDiagram diagram;
+    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_OUTSIDE=16,M_FAN=24,M_PUMP=25,M_VALVE=26,M_DHW=27;
+    private BoilerDiagram diagram;private TextView gasToday;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Map<Integer,TextView> values=new HashMap<>(), details=new HashMap<>();
@@ -101,7 +101,7 @@ public class MainActivity extends Activity {
         root.addView(text("Podgląd • odświeżanie co 5 s przy otwartej aplikacji",11,MUTED));render();
     }
     private void render(){
-        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();diagram=null;
+        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();diagram=null;gasToday=null;
         for(String name:tabButtons.keySet()){Button b=tabButtons.get(name);boolean selected=name.equals(tab);b.setTextColor(selected?Color.WHITE:TEXT);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(selected?accent():CARD));}
         if(tab.equals("Dom")){renderRooms();return;}
         TextView title=text(tab,28,TEXT);title.setPadding(0,dp(14),0,dp(8));body.addView(title);
@@ -119,12 +119,20 @@ public class MainActivity extends Activity {
     private void renderDiagram(){
         LinearLayout frame=column();frame.setPadding(dp(8),dp(10),dp(8),dp(10));frame.setBackground(shape(Color.rgb(236,241,247)));
         LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,-2);fp.bottomMargin=dp(12);body.addView(frame,fp);
-        diagram=new BoilerDiagram(this,M_BURNER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW);
+        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW);
         diagram.setListener(new BoilerDiagram.Listener(){
             public void onTap(int i){if(entity(i).isEmpty())chooseMetric(i);else history(i);}
             public void onLongPress(int i){chooseMetric(i);}
         });
         frame.addView(diagram,new LinearLayout.LayoutParams(-1,-2));
+        // Zużycie gazu dziś pod schematem
+        LinearLayout gas=new LinearLayout(this);gas.setGravity(Gravity.CENTER_VERTICAL);gas.setPadding(dp(14),dp(10),dp(14),dp(10));
+        gas.setBackground(shape(Color.rgb(30,41,59)));
+        TextView gl=text("Zużycie gazu dziś",14,Color.rgb(203,213,225));gas.addView(gl,new LinearLayout.LayoutParams(0,-2,1));
+        gasToday=text("—",20,Color.rgb(253,186,116));gasToday.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));gas.addView(gasToday);
+        gas.setOnClickListener(v->{if(entity(M_GAS_TODAY).isEmpty())chooseMetric(M_GAS_TODAY);else history(M_GAS_TODAY);});
+        gas.setOnLongClickListener(v->{chooseMetric(M_GAS_TODAY);return true;});
+        LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(-1,-2);gp.topMargin=dp(8);gp.leftMargin=dp(4);gp.rightMargin=dp(4);frame.addView(gas,gp);
     }
     /** Krótki tekst wartości do etykiety na schemacie. */
     private String shortValue(int i){
@@ -135,7 +143,8 @@ public class MainActivity extends Activity {
         if(i==M_BURNER)return state.equals("on")?"działa":state.equals("off")?"postój":state;
         if(state.equals("on"))return "wł.";if(state.equals("off"))return "wył.";
         JSONObject attrs=s.optJSONObject("attributes");String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
-        try{double v=Double.parseDouble(state);boolean integer=unit.equals("%")||unit.equalsIgnoreCase("rpm")||unit.equalsIgnoreCase("obr/min")||Math.abs(v)>=1000;
+        try{double v=Double.parseDouble(state);if(unit.contains("m³")||unit.contains("m3"))return String.format(new Locale("pl","PL"),"%.2f",v)+" "+unit;
+            boolean integer=unit.equals("%")||unit.equalsIgnoreCase("rpm")||unit.equalsIgnoreCase("obr/min")||Math.abs(v)>=1000;
             String num=String.format(new Locale("pl","PL"),integer?"%.0f":"%.1f",v);
             return num+(unit.isEmpty()?"":(unit.equals("%")?" %":" "+unit));
         }catch(NumberFormatException e){return state.length()>12?state.substring(0,12)+"…":state;}
@@ -146,7 +155,8 @@ public class MainActivity extends Activity {
     }
     private void updateDiagram(){
         if(diagram==null)return;
-        for(int i:new int[]{M_BURNER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW})diagram.setValue(i,shortValue(i));
+        if(gasToday!=null)gasToday.setText(shortValue(M_GAS_TODAY));
+        for(int i:new int[]{M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW})diagram.setValue(i,shortValue(i));
         JSONObject b=entity(M_BURNER).isEmpty()?null:states.get(entity(M_BURNER));
         boolean burner=b!=null&&b.optString("state").equals("on");
         diagram.setState(burner,burner||number(M_PUMP)>0||number(M_FAN)>0);
