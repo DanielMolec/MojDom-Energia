@@ -269,13 +269,31 @@ public class MainActivity extends Activity {
         JSONObject s=entity(i).isEmpty()?null:states.get(entity(i));
         try{return s==null?0:Double.parseDouble(s.optString("state",""));}catch(Exception e){return 0;}
     }
+    private String unitOf(int i){JSONObject s=entity(i).isEmpty()?null:states.get(entity(i));JSONObject a=s==null?null:s.optJSONObject("attributes");return a==null?"":a.optString("unit_of_measurement","");}
+    /** Prędkość przepływu 0..1 na podstawie pompy (% lub W); bez czujnika pompy — średnia, gdy palnik pracuje. */
+    private float pumpSpeed(boolean burner){
+        if(entity(M_PUMP).isEmpty()||states.get(entity(M_PUMP))==null)return burner?0.5f:0;
+        JSONObject s=states.get(entity(M_PUMP));String st=s.optString("state","");
+        if(st.equals("on"))return 0.6f;if(st.equals("off"))return 0;
+        double v=number(M_PUMP);if(v<=0)return 0;
+        String u=unitOf(M_PUMP);
+        double f=u.equals("%")?v/100:u.equalsIgnoreCase("kW")?v*1000/60:u.equalsIgnoreCase("W")?v/60:v/100; // typowa pompa kotła ≈ 60 W
+        return (float)Math.max(0.08,Math.min(1,f));
+    }
+    /** Prędkość wentylatora 0..1 na podstawie obrotów (≈ 6000 obr/min = 100 %). */
+    private float fanSpeed(boolean burner){
+        // Bez czujnika obrotów: średnia prędkość, gdy palnik pracuje
+        if(entity(M_FAN).isEmpty()||states.get(entity(M_FAN))==null)return burner?0.5f:0;
+        double v=number(M_FAN);if(v<=0)return 0;
+        return (float)Math.max(0.05,Math.min(1,unitOf(M_FAN).equals("%")?v/100:v/6000));
+    }
     private boolean burnerOn(){JSONObject b=entity(M_BURNER).isEmpty()?null:states.get(entity(M_BURNER));return b!=null&&b.optString("state").equals("on");}
     private void updateDiagram(){
         if(diagram==null)return;
         if(gasToday!=null)gasToday.setText(shortValue(M_GAS_TODAY));
         for(int i:ON_DIAGRAM)diagram.setValue(i,shortValue(i));
         boolean burner=burnerOn();
-        diagram.setState(burner,burner||number(M_PUMP)>0||number(M_FAN)>0);
+        diagram.setState(burner,pumpSpeed(burner),fanSpeed(burner));
     }
     private void updateCards(){
         updateRooms();updateDiagram();updateHero();

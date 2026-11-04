@@ -28,7 +28,8 @@ final class BoilerDiagram extends View {
     private final GestureDetector gestures;
     private Listener listener;
     private boolean burnerOn = false, flowing = false;
-    private float phase = 0, scale = 1;
+    private float phase = 0, fanAngle = 0, scale = 1;
+    private float flowSpeed = 0, fanSpeed = 0; // 0..1
 
     BoilerDiagram(Context c, int burner, int power, int flow, int fan, int pump, int valve, int ret, int house, int outside, int dhw) {
         super(c);
@@ -61,8 +62,16 @@ final class BoilerDiagram extends View {
     /** Ustawia tekst etykiety danej metryki. */
     void setValue(int metric, String text) { for (Label l : labels) if (l.metric == metric) l.text = text; }
 
-    void setState(boolean burnerOn, boolean flowing) {
-        this.burnerOn = burnerOn; this.flowing = flowing; invalidate();
+    /**
+     * @param flowSpeed prędkość przepływu wody 0..1 (wg wysterowania/mocy pompy), 0 = brak przepływu
+     * @param fanSpeed  prędkość wentylatora 0..1 (wg obrotów), używana gdy palnik pracuje
+     */
+    void setState(boolean burnerOn, float flowSpeed, float fanSpeed) {
+        this.burnerOn = burnerOn;
+        this.flowSpeed = Math.max(0, Math.min(1, flowSpeed));
+        this.fanSpeed = Math.max(0, Math.min(1, fanSpeed));
+        this.flowing = this.flowSpeed > 0.001f;
+        invalidate();
     }
 
     private void buildPipes() {
@@ -107,7 +116,14 @@ final class BoilerDiagram extends View {
         drawOutsideSensor(canvas, 470, 56);
         for (Label l : labels) drawLabel(canvas, l);
         canvas.restore();
-        if (flowing && isShown()) { phase = (phase + 1.2f) % 24; postInvalidateDelayed(60); }
+        boolean fanOn = fanSpeed > 0.001f;
+        if ((flowing || fanOn) && isShown()) {
+            // 0,4 … 4 jednostki na klatkę: wolna pompa = wolny przepływ, 100 % = szybki
+            if (flowing) phase = (phase + 0.4f + 3.6f * flowSpeed) % 24;
+            // 2 … 50° na klatkę — wolne obroty = wolny wentylator
+            if (fanOn) fanAngle = (fanAngle + 2 + 48 * fanSpeed) % 360;
+            postInvalidateDelayed(40);
+        }
     }
 
     private void drawHouse(Canvas c) {
@@ -138,9 +154,9 @@ final class BoilerDiagram extends View {
         stroke.setColor(RED); c.drawPath(supply, stroke);
         if (flowing) {
             stroke.setStrokeWidth(2);
-            stroke.setPathEffect(new DashPathEffect(new float[]{6, 18}, -phase));
+            stroke.setPathEffect(new DashPathEffect(new float[]{6, 18}, 24 - phase));
             stroke.setColor(Color.argb(170, 255, 220, 200)); c.drawPath(supply, stroke);
-            stroke.setPathEffect(new DashPathEffect(new float[]{6, 18}, phase));
+            stroke.setPathEffect(new DashPathEffect(new float[]{6, 18}, 24 - phase));
             stroke.setColor(Color.argb(170, 210, 235, 255)); c.drawPath(ret, stroke);
             stroke.setPathEffect(null);
         }
@@ -174,7 +190,7 @@ final class BoilerDiagram extends View {
         float fx = 58, fy = 146;
         fill.setColor(Color.rgb(51, 65, 85)); c.drawCircle(fx, fy, 13, fill);
         fill.setColor(Color.WHITE);
-        float rot = burnerOn ? phase * 15 : 0;
+        float rot = fanAngle;
         for (int i = 0; i < 3; i++) {
             c.save(); c.rotate(rot + i * 120, fx, fy);
             c.drawOval(new RectF(fx - 3.5f, fy - 11, fx + 3.5f, fy - 2), fill);
