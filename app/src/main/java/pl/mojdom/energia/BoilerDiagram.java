@@ -209,8 +209,8 @@ final class BoilerDiagram extends View {
     }
 
     private void drawLabel(Canvas c, Label l) {
-        txt.setTextSize(13);
-        float w = Math.max(46, txt.measureText(l.text) + 20), h = 26;
+        txt.setTextSize(15);
+        float w = Math.max(46, txt.measureText(l.text) + 18), h = 28;
         RectF r = new RectF(l.cx - w / 2, l.cy - h / 2, l.cx + w / 2, l.cy + h / 2);
         if (r.left < 2) r.offset(2 - r.left, 0);
         if (r.right > W - 2) r.offset(W - 2 - r.right, 0);
