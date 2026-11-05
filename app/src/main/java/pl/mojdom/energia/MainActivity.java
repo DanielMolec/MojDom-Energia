@@ -49,9 +49,10 @@ public class MainActivity extends Activity {
         {"Kocioł", "Obroty wentylatora", ""},
         {"Ukryte", "Pompa — wysterowanie (scalone z „Pompa”)", ""},
         {"Kocioł", "Zawór 3-drogowy", ""},
-        {"Kocioł", "Temperatura CWU (zasobnik)", ""}
+        {"Kocioł", "Temperatura CWU (zasobnik)", ""},
+        {"Krzywa", "Temperatura zadana z krzywej", ""}
     };
-    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27;
+    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28;
     // Metryki pokazane na schemacie — nie powtarzamy ich w kafelkach
     private static final Set<Integer> ON_DIAGRAM=new HashSet<>(Arrays.asList(M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW));
     private static final String[] TABS={"Dom","Gaz","Prąd","Kocioł","Serwis"};
@@ -107,7 +108,25 @@ public class MainActivity extends Activity {
     private GradientDrawable shape(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int alpha(int color,int a){return Color.argb(a,Color.red(color),Color.green(color),Color.blue(color));}
     private Button button(String title,Runnable r){Button b=new Button(this);b.setText(title);b.setAllCaps(false);b.setTextSize(13);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));b.setTextColor(TEXT);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));b.setOnClickListener(v->r.run());return b;}
-    private String entity(int i){return prefs.getString("entity_"+i,metrics[i][2]).trim();}
+    private String entity(int i){
+        String id=prefs.getString("entity_"+i,metrics[i][2]).trim();
+        if(i==M_CURVE_SET&&id.isEmpty())return detectCurveSetpoint();
+        return id;
+    }
+    /** Gdy użytkownik nie wybrał czujnika: szuka w HA encji z temperaturą zadaną wyliczoną z krzywej grzewczej. */
+    private String detectCurveSetpoint(){
+        String best="";int score=0;
+        for(String id:states.keySet()){
+            if(!id.startsWith("sensor.")&&!id.startsWith("input_number.")&&!id.startsWith("number."))continue;
+            if(id.equals(metrics[M_SET][2])||id.equals(metrics[13][2]))continue;
+            String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(n.contains("flowtempdesired")||n.contains("flow_temp_desired")||n.contains("flowtemp_desired"))sc=3;
+            if(n.contains("krzyw")&&(n.contains("zadan")||n.contains("target")||n.contains("setpoint")))sc=4;
+            if(n.contains("zadana_zasilania")||n.contains("zasilanie_zadane")||n.contains("zadana_z_krzywej"))sc=5;
+            if(sc>score){score=sc;best=id;}
+        }
+        return best;
+    }
     /** Kółko z ikoną w kolorze akcentu. */
     private View badge(int icon,int color,int size){
         FrameLayout f=new FrameLayout(this);f.setBackground(shape(alpha(color,30),size/2));
@@ -182,6 +201,8 @@ public class MainActivity extends Activity {
         int accent=accentFor(tab);
         ArrayList<Integer> list=new ArrayList<>();
         for(int i=0;i<metrics.length;i++)if(metrics[i][0].equals(tab)&&!(tab.equals("Kocioł")&&ON_DIAGRAM.contains(i)))list.add(i);
+        // Na zakładce Kocioł kafelek „Temperatura zadana” pokazuje temperaturę zadaną z krzywej (w tym samym miejscu)
+        if(tab.equals("Kocioł")&&list.contains(M_SET))list.set(list.indexOf(M_SET),M_CURVE_SET);
         if(tab.equals("Kocioł")){
             renderDiagram();
             body.addView(section("Parametry"));

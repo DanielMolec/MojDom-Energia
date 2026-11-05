@@ -118,10 +118,10 @@ final class BoilerDiagram extends View {
         canvas.restore();
         boolean fanOn = fanSpeed > 0.001f;
         if ((flowing || fanOn) && isShown()) {
-            // 0,4 … 4 jednostki na klatkę: wolna pompa = wolny przepływ, 100 % = szybki
-            if (flowing) phase = (phase + 0.4f + 3.6f * flowSpeed) % 24;
-            // 2 … 50° na klatkę — wolne obroty = wolny wentylator
-            if (fanOn) fanAngle = (fanAngle + 2 + 48 * fanSpeed) % 360;
+            // 0,04 … 0,4 jednostki na klatkę: wolna pompa = wolny przepływ, 100 % = najszybszy
+            if (flowing) phase = (phase + 0.04f + 0.36f * flowSpeed) % 24;
+            // 0,2 … 5° na klatkę — wolne obroty = wolny wentylator
+            if (fanOn) fanAngle = (fanAngle + 0.2f + 4.8f * fanSpeed) % 360;
             postInvalidateDelayed(40);
         }
     }
