@@ -226,9 +226,10 @@ public class MainActivity extends Activity {
         }).show();
     }
     private void roomTap(String key){
+        // Pomieszczenie z temperaturą zadaną zawsze otwiera okienko −/+ (czujnik można dobrać w okienku)
+        if(slotEditable(key)){roomSheet(key);return;}
         if(slotTemp(key).isEmpty()){chooseSlotTemp(key);return;}
-        if(!slotEditable(key)){history(slotTemp(key),slotName(key));return;}
-        roomSheet(key);
+        history(slotTemp(key),slotName(key));
     }
     /** Okienko od dołu ekranu: temperatura teraz, temperatura zadana z −/+, historia. */
     private void roomSheet(String key){
@@ -241,6 +242,10 @@ public class MainActivity extends Activity {
         TextView name=bold(slotName(key),22,TEXT);v.addView(name);
         String now=slotTempText(key);
         TextView nowT=text(now.equals("—")?"Teraz —":"Teraz "+now+"C",13,MUTED);nowT.setPadding(0,dp(4),0,0);v.addView(nowT);
+        if(slotTemp(key).isEmpty()){
+            TextView pickT=bold("Wybierz czujnik temperatury ›",13,GOLD);pickT.setPadding(0,dp(6),0,dp(2));
+            pickT.setOnClickListener(x->{d.dismiss();chooseSlotTemp(key);});v.addView(pickT);
+        }
         if(slotSet(key).isEmpty()){
             TextView info=text("Nie wybrano encji temperatury zadanej. Wybierz encję typu input_number, number lub climate z Home Assistant.",14,MUTED);info.setPadding(0,dp(16),0,dp(8));v.addView(info);
             TextView pick=bold("Wybierz encję",15,BG);pick.setGravity(Gravity.CENTER);pick.setBackground(shape(GOLD,14));pick.setPadding(0,dp(14),0,dp(14));
@@ -257,7 +262,7 @@ public class MainActivity extends Activity {
         }
         LinearLayout btns=row();btns.setPadding(0,dp(16),0,0);
         TextView hist=text("Historia 24 h",14,MUTED);hist.setGravity(Gravity.CENTER);GradientDrawable hb=shape(CARD,14);hb.setStroke(dp(1),Color.rgb(42,53,80));hist.setBackground(hb);hist.setPadding(0,dp(13),0,dp(13));
-        hist.setOnClickListener(x->{d.dismiss();history(slotTemp(key),slotName(key));});
+        hist.setOnClickListener(x->{d.dismiss();if(slotTemp(key).isEmpty())chooseSlotTemp(key);else history(slotTemp(key),slotName(key));});
         TextView ok=bold("Gotowe",14,BG);ok.setGravity(Gravity.CENTER);ok.setBackground(shape(GOLD,14));ok.setPadding(0,dp(13),0,dp(13));ok.setOnClickListener(x->d.dismiss());
         LinearLayout.LayoutParams b1=new LinearLayout.LayoutParams(0,-2,1);b1.rightMargin=dp(6);btns.addView(hist,b1);
         LinearLayout.LayoutParams b2=new LinearLayout.LayoutParams(0,-2,1);b2.leftMargin=dp(6);btns.addView(ok,b2);
