@@ -385,6 +385,7 @@ public class MainActivity extends Activity {
     }
     private String roomTarget(String id){
         String t=prefs.getString("room_set_"+id,"").trim();
+        if(t.equals("-"))return ""; // sterowanie ukryte przez użytkownika
         return !t.isEmpty()?t:id.startsWith("climate.")?id:"";
     }
     private void chooseRoomTarget(String id){
@@ -683,19 +684,21 @@ public class MainActivity extends Activity {
             TextView value=text("—",26,TEXT);value.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));c.addView(value);
             TextView updated=text("Oczekiwanie na dane",11,MUTED);c.addView(updated);
             // Nastawa grzejnika / termostatu: − zadana +
-            Ctl rc=ctl("room:"+id,()->roomTarget(id),"°",()->chooseRoomTarget(id));
-            LinearLayout r=ctlRow(rc,34,15,0);r.setPadding(0,dp(10),0,0);c.addView(r);
+            // Tylko gdy jest czym sterować (termostat albo wybrana nastawa); sam czujnik temperatury — bez −/+
+            boolean controlled=!roomTarget(id).isEmpty();
+            if(controlled){Ctl rc=ctl("room:"+id,()->roomTarget(id),"°",()->chooseRoomTarget(id));
+                LinearLayout r=ctlRow(rc,34,15,0);r.setPadding(0,dp(10),0,0);c.addView(r);}
             roomViews.put(id,new TextView[]{name,value,updated});
             c.setOnClickListener(v->history(id,roomName(id)));
-            c.setOnLongClickListener(v->{new AlertDialog.Builder(this).setTitle(roomName(id)).setItems(new CharSequence[]{"Zmień nazwę","Wybierz encję temperatury zadanej"},(dd,which)->{
-                if(which==1){chooseRoomTarget(id);return;}
+            c.setOnLongClickListener(v->{new AlertDialog.Builder(this).setTitle(roomName(id)).setItems(new CharSequence[]{"Zmień nazwę",controlled?"Ukryj sterowanie −/+":"Dodaj sterowanie −/+ (encja temperatury zadanej)"},(dd,which)->{
+                if(which==1){if(controlled){prefs.edit().putString("room_set_"+id,"-").apply();render();}else chooseRoomTarget(id);return;}
                 EditText label=new EditText(this);label.setText(roomName(id));label.setSingleLine(true);
                 new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();}).show();return true;});
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);k++;
         }
         if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         if(roomViews.isEmpty())body.addView(text("Dodaj czujniki przyciskiem „Edytuj”.",15,MUTED));
-        TextView help=text("Dotknij kafelka, aby zobaczyć historię 24 h. Przytrzymaj, aby zmienić nazwę lub wybrać encję temperatury zadanej grzejnika (−/+).",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
+        TextView help=text("Dotknij kafelka, aby zobaczyć historię 24 h. Przytrzymaj, aby zmienić nazwę albo dodać lub ukryć sterowanie −/+.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
     }
     private void updateHero(){
         if(ring==null)return;
