@@ -162,8 +162,9 @@ public class MainActivity extends Activity {
         // klucz → {nazwa domyślna, kondygnacja, słowa do automatycznego dopasowania czujnika}
         SLOTS.put("p2_kor",new String[]{"Korytarz","PIĘTRO 2","korytarz"});
         SLOTS.put("p2_laz",new String[]{"Łazienka","PIĘTRO 2","lazienk"});
-        SLOTS.put("p2_pok1",new String[]{"Pokój 1","PIĘTRO 2","pokoj_1|pokoj1"});
-        SLOTS.put("p2_pok2",new String[]{"Pokój 2","PIĘTRO 2","pokoj_2|pokoj2"});
+        SLOTS.put("p2_mik",new String[]{"Mikołaj","PIĘTRO 2 • POKÓJ","mikolaj"});
+        SLOTS.put("p2_adr",new String[]{"Adrian","PIĘTRO 2 • POKÓJ","adrian"});
+        SLOTS.put("p2_cio",new String[]{"Ciotka","PIĘTRO 2 • POKÓJ","ciotk"});
         SLOTS.put("p1_syp",new String[]{"Sypialnia","PIĘTRO 1","sypialn"});
         SLOTS.put("p1_laz",new String[]{"Łazienka","PIĘTRO 1","lazienk"});
         SLOTS.put("p1_sal",new String[]{"Salon","PIĘTRO 1","salon"});
@@ -195,7 +196,8 @@ public class MainActivity extends Activity {
     }
     private String slotSet(String key){
         String id=prefs.getString("slot_set_"+key,"").trim();if(!id.isEmpty())return id;
-        String t=slotTemp(key);return t.startsWith("climate.")?t:"";
+        String t=slotTemp(key);if(t.startsWith("climate."))return t;
+        return key.equals("p1_kor")?entity(M_SET):""; // korytarz piętra 1: temperatura zadana regulatora
     }
     private Ctl slotCtl(String key){Ctl c=ctls.get("slot:"+key);if(c==null)c=ctl("slot:"+key,()->slotSet(key),"°",()->chooseSlotSet(key));return c;}
     private void chooseSlotTemp(String key){pickEntity(slotName(key)+" — czujnik temperatury",id->id.startsWith("sensor.")||id.startsWith("climate."),e->{prefs.edit().putString("slot_temp_"+key,e).apply();render();});}

@@ -21,10 +21,13 @@ final class BoilerDiagram extends View {
     static final int HEALTH_UNKNOWN = -1, HEALTH_OK = 0, HEALTH_WARN = 1, HEALTH_ALARM = 2;
     static final int HOT = 0, COLD = 1, NEUTRAL = 2, STATUS = 3;
 
-    /** Pomieszczenia na schemacie: klucz, piętro, środek X, góra Y, czy z temperaturą zadaną (dotknij → −/+). */
-    static final String[] ROOM_KEYS = {"p2_kor", "p2_laz", "p2_pok1", "p2_pok2", "p1_syp", "p1_laz", "p1_sal", "p1_kor", "klatka"};
-    private static final float[][] ROOM_POS = {{58, 128}, {114.5f, 122}, {171, 122}, {227.5f, 122}, {58, 244}, {114.5f, 244}, {171, 244}, {227.5f, 244}, {293, 222}};
-    static final boolean[] ROOM_EDITABLE = {false, true, true, true, false, false, false, false, false};
+    /** Pomieszczenia na schemacie: klucz, {środek X, góra Y, szerokość}, czy z temperaturą zadaną (dotknij → −/+). */
+    static final String[] ROOM_KEYS = {"p2_kor", "p2_laz", "p2_mik", "p2_adr", "p2_cio", "p1_syp", "p1_laz", "p1_sal", "p1_kor", "klatka"};
+    private static final float[][] ROOM_POS = {{55, 128, 46}, {105, 122, 46}, {155, 122, 46}, {205, 122, 46}, {255, 122, 46},
+        {61, 244, 54}, {124, 244, 54}, {186, 244, 54}, {249, 238, 54}, {304, 222, 46}};
+    static final boolean[] ROOM_EDITABLE = {false, true, true, true, true, false, false, false, true, false};
+    private static final float[] P2_X = {55, 105, 155, 205, 255}; // grzejniki piętra 2
+    private static final float SUP_X = 276, RET_X = 272, STAIR_X = 280; // pion zasilania/powrotu przy ścianie klatki
 
     private static final float W = 358, H = 470;
     private static final int RED = Color.rgb(234, 88, 52), BLUE = Color.rgb(59, 130, 222);
@@ -37,9 +40,9 @@ final class BoilerDiagram extends View {
         Label(int metric, float cx, float cy, int kind) { this.metric = metric; this.cx = cx; this.cy = cy; this.kind = kind; }
     }
     private static final class Room {
-        final String key; final float cx, top; boolean gold; String name = "", temp = "—", sub = null; int subColor = GOLD;
+        final String key; final float cx, top, w; boolean gold; String name = "", temp = "—", sub = null; int subColor = GOLD;
         final RectF hit = new RectF();
-        Room(String key, float cx, float top, boolean gold) { this.key = key; this.cx = cx; this.top = top; this.gold = gold; }
+        Room(String key, float cx, float top, float w, boolean gold) { this.key = key; this.cx = cx; this.top = top; this.w = w; this.gold = gold; }
     }
 
     private final ArrayList<Label> labels = new ArrayList<>();
@@ -69,7 +72,7 @@ final class BoilerDiagram extends View {
         labels.add(new Label(ret, 220, 452, COLD));
         labels.add(new Label(outside, 318, 30, COLD));
         labels.add(new Label(ufhFlow, 92, 299, HOT));
-        for (int i = 0; i < ROOM_KEYS.length; i++) rooms.put(ROOM_KEYS[i], new Room(ROOM_KEYS[i], ROOM_POS[i][0], ROOM_POS[i][1], ROOM_EDITABLE[i]));
+        for (int i = 0; i < ROOM_KEYS.length; i++) rooms.put(ROOM_KEYS[i], new Room(ROOM_KEYS[i], ROOM_POS[i][0], ROOM_POS[i][1], ROOM_POS[i][2], ROOM_EDITABLE[i]));
         txt.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
         txt.setTextAlign(Paint.Align.CENTER);
         stroke.setStyle(Paint.Style.STROKE);
@@ -122,15 +125,15 @@ final class BoilerDiagram extends View {
         // Zasilanie od kotła do zaworu 3-drogowego (wspólne)
         supBoiler.moveTo(96, 372); supBoiler.lineTo(182, 372);
         // CO: zawór → pompa → pion przy klatce → piętro 2 i klatka
-        supCo.moveTo(182, 372); supCo.lineTo(252, 372); supCo.lineTo(252, 203); supCo.lineTo(40, 203);
-        for (float x : new float[]{48, 104, 161, 217}) { supCo.moveTo(x, 203); supCo.lineTo(x, 198); }
-        supCo.moveTo(252, 300); supCo.lineTo(270, 300);
+        supCo.moveTo(182, 372); supCo.lineTo(SUP_X, 372); supCo.lineTo(SUP_X, 203); supCo.lineTo(40, 203);
+        for (float x : P2_X) { supCo.moveTo(x - 9, 203); supCo.lineTo(x - 9, 198); }
+        supCo.moveTo(SUP_X, 300); supCo.lineTo(292, 300);
         // CWU: zawór → wężownica zasobnika
         supDhw.moveTo(182, 372); supDhw.lineTo(182, 382); supDhw.lineTo(162, 382);
         // Powrót CO: grzejniki, klatka → pion → do kotła
-        for (float x : new float[]{68, 124, 181, 237}) { retCo.moveTo(x, 198); retCo.lineTo(x, 208); }
-        retCo.moveTo(40, 208); retCo.lineTo(248, 208); retCo.lineTo(248, 434); retCo.lineTo(174, 434);
-        retCo.moveTo(270, 306); retCo.lineTo(248, 306);
+        for (float x : P2_X) { retCo.moveTo(x + 9, 198); retCo.lineTo(x + 9, 208); }
+        retCo.moveTo(40, 208); retCo.lineTo(RET_X, 208); retCo.lineTo(RET_X, 434); retCo.lineTo(174, 434);
+        retCo.moveTo(292, 306); retCo.lineTo(RET_X, 306);
         // Powrót CWU: z wężownicy do wspólnego powrotu
         retDhw.moveTo(162, 420); retDhw.lineTo(174, 420); retDhw.lineTo(174, 434);
         // Powrót wspólny do kotła
@@ -138,7 +141,7 @@ final class BoilerDiagram extends View {
         supply.addPath(supBoiler); supply.addPath(supCo); supply.addPath(supDhw);
         ret.addPath(retCo); ret.addPath(retDhw); ret.addPath(retBoiler);
         // Podłogówka piętra 1: wężownica w posadzce, z pionu zasilania do pionu powrotu
-        ufh.moveTo(252, 312); ufh.lineTo(36, 312); ufh.lineTo(36, 318); ufh.lineTo(236, 318); ufh.lineTo(236, 324); ufh.lineTo(40, 324); ufh.lineTo(40, 328); ufh.lineTo(248, 328);
+        ufh.moveTo(SUP_X, 312); ufh.lineTo(36, 312); ufh.lineTo(36, 318); ufh.lineTo(260, 318); ufh.lineTo(260, 324); ufh.lineTo(40, 324); ufh.lineTo(40, 328); ufh.lineTo(RET_X, 328);
     }
 
     @Override protected void onMeasure(int w, int h) {
@@ -213,19 +216,20 @@ final class BoilerDiagram extends View {
         stroke.setColor(GOLD); stroke.setStrokeWidth(2.5f);
         tmp.reset(); tmp.moveTo(179, 16); tmp.lineTo(342, 94); tmp.lineTo(16, 94); tmp.close(); c.drawPath(tmp, stroke);
         c.drawRect(30, 94, 328, 330, stroke);
-        stroke.setColor(Color.argb(140, 245, 184, 46)); stroke.setStrokeWidth(2); c.drawLine(30, 212, 256, 212, stroke);
-        stroke.setColor(Color.argb(90, 245, 184, 46)); stroke.setStrokeWidth(1.5f); c.drawLine(256, 94, 256, 330, stroke);
+        stroke.setColor(Color.argb(140, 245, 184, 46)); stroke.setStrokeWidth(2); c.drawLine(30, 212, STAIR_X, 212, stroke);
+        stroke.setColor(Color.argb(90, 245, 184, 46)); stroke.setStrokeWidth(1.5f); c.drawLine(STAIR_X, 94, STAIR_X, 330, stroke);
         // ścianki działowe
         stroke.setColor(Color.rgb(42, 53, 80)); stroke.setPathEffect(new DashPathEffect(new float[]{4, 4}, 0));
-        for (float x : new float[]{86, 143, 199}) { c.drawLine(x, 114, x, 212, stroke); c.drawLine(x, 232, x, 306, stroke); }
+        for (float x : new float[]{80, 130, 180, 230}) c.drawLine(x, 114, x, 212, stroke);
+        for (float x : new float[]{92.5f, 155, 217.5f}) c.drawLine(x, 232, x, 306, stroke);
         stroke.setPathEffect(null);
         // schody przez oba piętra
         stroke.setColor(Color.rgb(86, 98, 122)); stroke.setStrokeWidth(2);
-        tmp.reset(); tmp.moveTo(262, 330);
-        for (int i = 0; i < 7; i++) { tmp.lineTo(262 + i * 9, 318 - i * 12); tmp.lineTo(271 + i * 9, 318 - i * 12); }
+        tmp.reset(); tmp.moveTo(284, 330);
+        for (int i = 0; i < 7; i++) { tmp.lineTo(284 + i * 6, 318 - i * 12); tmp.lineTo(290 + i * 6, 318 - i * 12); }
         c.drawPath(tmp, stroke);
-        tmp.reset(); tmp.moveTo(322, 212);
-        for (int i = 0; i < 7; i++) { tmp.lineTo(322 - i * 9, 200 - i * 12); tmp.lineTo(313 - i * 9, 200 - i * 12); }
+        tmp.reset(); tmp.moveTo(324, 212);
+        for (int i = 0; i < 7; i++) { tmp.lineTo(324 - i * 6, 200 - i * 12); tmp.lineTo(318 - i * 6, 200 - i * 12); }
         c.drawPath(tmp, stroke);
         // podpisy kondygnacji
         txt.setTextAlign(Paint.Align.LEFT);
@@ -233,7 +237,7 @@ final class BoilerDiagram extends View {
         text(c, "PIĘTRO 1 • PODŁOGÓWKA", 36, 226, 8.5f, MUTED, false, 0.18f);
         text(c, "PIWNICA", 36, 346, 8.5f, MUTED, false, 0.18f);
         txt.setTextAlign(Paint.Align.CENTER);
-        text(c, "KLATKA", 292, 108, 8.5f, MUTED, false, 0.12f);
+        text(c, "KLATKA", 304, 108, 8f, MUTED, false, 0.08f);
     }
 
     private void drawRadiator(Canvas c, float x, float y, float w, float h, boolean dim) {
@@ -247,11 +251,8 @@ final class BoilerDiagram extends View {
     }
 
     private void drawRadiators(Canvas c) {
-        drawRadiator(c, 42, 180, 32, 18, !rooms.get("p2_kor").gold);
-        drawRadiator(c, 98, 180, 32, 18, !rooms.get("p2_laz").gold);
-        drawRadiator(c, 155, 180, 32, 18, !rooms.get("p2_pok1").gold);
-        drawRadiator(c, 211, 180, 32, 18, !rooms.get("p2_pok2").gold);
-        drawRadiator(c, 270, 290, 30, 20, false);
+        for (int i = 0; i < P2_X.length; i++) drawRadiator(c, P2_X[i] - 14, 180, 28, 18, !rooms.get(ROOM_KEYS[i]).gold);
+        drawRadiator(c, 292, 290, 26, 20, false);
     }
 
     private void drawPipes(Canvas c) {
@@ -271,8 +272,8 @@ final class BoilerDiagram extends View {
             stroke.setPathEffect(null);
         }
         // zawór mieszający podłogówki
-        fill.setColor(Color.rgb(11, 18, 32)); c.drawCircle(240, 312, 5.5f, fill);
-        stroke.setColor(GOLD); stroke.setStrokeWidth(1.5f); c.drawCircle(240, 312, 5.5f, stroke);
+        fill.setColor(Color.rgb(11, 18, 32)); c.drawCircle(266, 312, 5.5f, fill);
+        stroke.setColor(GOLD); stroke.setStrokeWidth(1.5f); c.drawCircle(266, 312, 5.5f, stroke);
     }
 
     private void drawTank(Canvas c) {
@@ -357,8 +358,7 @@ final class BoilerDiagram extends View {
     }
 
     private void drawRoom(Canvas c, Room r) {
-        boolean klatka = r.key.equals("klatka");
-        float w = klatka ? 62 : 52, h = r.sub != null ? 50 : 38;
+        float w = r.w, h = r.sub != null ? 50 : 38;
         RectF box = new RectF(r.cx - w / 2, r.top, r.cx + w / 2, r.top + h);
         r.hit.set(box);
         fill.setShader(null); fill.setColor(LABEL_BG); c.drawRoundRect(box, 8, 8, fill);
