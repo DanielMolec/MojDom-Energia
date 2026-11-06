@@ -51,14 +51,16 @@ public class MainActivity extends Activity {
         {"Kocioł", "Zawór 3-drogowy", ""},
         {"Kocioł", "Temperatura CWU (zasobnik)", ""},
         {"Krzywa", "Temperatura zadana z krzywej", ""},
-        {"Serwis", "Kod błędu kotła", ""}
+        {"Serwis", "Kod błędu kotła", ""},
+        {"Sterowanie", "Krzywa grzewcza — nastawa", ""},
+        {"Sterowanie", "Temperatura zadana CWU", ""}
     };
-    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28,M_ERROR=29,M_PRESSURE=12,M_SERVICE=20,M_TECH=21;
+    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28,M_ERROR=29,M_PRESSURE=12,M_SERVICE=20,M_TECH=21,M_CURVE=13,M_CURVE_CTL=30,M_DHW_SET=31;
     // Metryki pokazane na schemacie — nie powtarzamy ich w kafelkach
     private static final Set<Integer> ON_DIAGRAM=new HashSet<>(Arrays.asList(M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW));
     private static final String[] TABS={"Dom","Gaz","Prąd","Kocioł","Serwis"};
     private static final int[] TAB_ICONS={Icon.HOME,Icon.FLAME,Icon.BOLT,Icon.BOILER,Icon.WRENCH};
-    private BoilerDiagram diagram;private LinearLayout alarmBox;private Double pendingSet=null;private long pendingUntil=0;private boolean setScheduled=false;private final Runnable sendSet=()->{setScheduled=false;sendSetpoint();};private TextView gasToday;private Ring ring;private TextView heroBurner,heroOutside;private Icon heroBurnerIcon;
+    private BoilerDiagram diagram;private LinearLayout alarmBox;private TextView gasToday;private Ring ring;private TextView heroBurner,heroOutside;private Icon heroBurnerIcon;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Map<Integer,TextView> values=new HashMap<>(), details=new HashMap<>();
@@ -113,6 +115,8 @@ public class MainActivity extends Activity {
         String id=prefs.getString("entity_"+i,metrics[i][2]).trim();
         if(i==M_CURVE_SET&&id.isEmpty())return detectCurveSetpoint();
         if(i==M_ERROR&&id.isEmpty())return detectErrorEntity();
+        if(i==M_CURVE_CTL&&id.isEmpty())return detectCurveControl();
+        if(i==M_DHW_SET&&id.isEmpty())return detectDhwSetpoint();
         return id;
     }
     /** Gdy użytkownik nie wybrał czujnika: szuka w HA encji z temperaturą zadaną wyliczoną z krzywej grzewczej. */
@@ -125,6 +129,35 @@ public class MainActivity extends Activity {
             if(n.contains("flowtempdesired")||n.contains("flow_temp_desired")||n.contains("flowtemp_desired"))sc=3;
             if(n.contains("krzyw")&&(n.contains("zadan")||n.contains("target")||n.contains("setpoint")))sc=4;
             if(n.contains("zadana_zasilania")||n.contains("zasilanie_zadane")||n.contains("zadana_z_krzywej"))sc=5;
+            if(sc>score){score=sc;best=id;}
+        }
+        return best;
+    }
+    private static boolean settable(String id){return id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("climate.")||id.startsWith("water_heater.");}
+    /** Gdy nie wybrano encji: szuka w HA nastawy krzywej grzewczej, którą można zmieniać (number / input_number). */
+    private String detectCurveControl(){
+        String sensor=prefs.getString("entity_"+M_CURVE,metrics[M_CURVE][2]).trim();
+        if(sensor.startsWith("number.")||sensor.startsWith("input_number."))return sensor;
+        String best="";int score=0;
+        for(String id:states.keySet()){
+            if(!id.startsWith("number.")&&!id.startsWith("input_number."))continue;
+            String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(n.contains("krzyw")||n.contains("curve"))sc=2;
+            if(sc>0&&(n.contains("zadan")||n.contains("desired")||n.contains("temp")))sc=1;
+            if(sc>0&&(n.contains("hc1")||n.contains("obieg")))sc++;
+            if(sc>score){score=sc;best=id;}
+        }
+        return best;
+    }
+    /** Gdy nie wybrano encji: szuka nastawy temperatury ciepłej wody (water_heater lub np. ebusd …hwctempdesired). */
+    private String detectDhwSetpoint(){
+        String best="",skip=prefs.getString("entity_"+M_SET,metrics[M_SET][2]).trim();int score=0;
+        for(String id:states.keySet()){
+            if(!settable(id)||id.startsWith("climate.")||id.equals(skip))continue;
+            String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(id.startsWith("water_heater."))sc=5;
+            else if(n.contains("hwctempdesired")||n.contains("hwc_temp_desired")||n.contains("dhw_target")||n.contains("dhw_setpoint"))sc=4;
+            else if((n.contains("cwu")||n.contains("dhw")||n.contains("hwc")||n.contains("ciepla_woda"))&&(n.contains("zadan")||n.contains("desired")||n.contains("target")||n.contains("set")))sc=3;
             if(sc>score){score=sc;best=id;}
         }
         return best;
@@ -243,58 +276,119 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ===== Sterowanie temperaturą zadaną =====
+    // ===== Sterowanie nastawami −/+ (temperatura zadana, krzywa, CWU, grzejniki) =====
+    /** Jedna nastawa sterowana przyciskami −/+. Zmiana jest wysyłana do HA chwilę po ostatnim kliknięciu. */
+    private final class Ctl{
+        java.util.function.Supplier<String> target,sub,fallback;String unit;Runnable choose;
+        Double pending;long until;boolean scheduled;TextView view,subView;
+        final Runnable sender=()->{scheduled=false;sendCtl(this);};
+    }
+    private final Map<String,Ctl> ctls=new HashMap<>();
+    private Ctl ctl(String key,java.util.function.Supplier<String> target,String unit,Runnable choose){
+        Ctl c=ctls.get(key);if(c==null){c=new Ctl();ctls.put(key,c);}
+        c.target=target;c.unit=unit;c.choose=choose;c.view=null;c.subView=null;c.sub=null;c.fallback=null;return c;
+    }
     /** {wartość, min, max, krok} albo null, gdy encji nie da się sterować. */
-    private double[] setpointInfo(){
-        String id=entity(M_SET);JSONObject s=id.isEmpty()?null:states.get(id);if(s==null)return null;
+    private double[] ctlInfo(String id){
+        JSONObject s=id==null||id.isEmpty()?null:states.get(id);if(s==null)return null;
         JSONObject a=s.optJSONObject("attributes");if(a==null)a=new JSONObject();
+        boolean dhw=id.startsWith("water_heater.");
         try{
             if(id.startsWith("input_number.")||id.startsWith("number."))
-                return new double[]{Double.parseDouble(s.optString("state")),a.optDouble("min",5),a.optDouble("max",30),a.optDouble("step",0.5)};
-            if(id.startsWith("climate."))
-                return new double[]{a.getDouble("temperature"),a.optDouble("min_temp",5),a.optDouble("max_temp",30),a.optDouble("target_temp_step",0.5)};
+                return new double[]{Double.parseDouble(s.optString("state")),a.optDouble("min",0),a.optDouble("max",100),a.optDouble("step",0.5)};
+            if(id.startsWith("climate.")||dhw)
+                return new double[]{a.getDouble("temperature"),a.optDouble("min_temp",dhw?35:5),a.optDouble("max_temp",dhw?65:30),a.optDouble("target_temp_step",dhw?1:0.5)};
         }catch(Exception ignored){}
         return null;
     }
-    private double currentSetpoint(){
-        double[] info=setpointInfo();
-        if(info!=null)return info[0];
-        JSONObject s=entity(M_SET).isEmpty()?null:states.get(entity(M_SET));
-        try{return Double.parseDouble(s.optString("state"));}catch(Exception e){return Double.NaN;}
+    /** Aktualna nastawa; świeżo kliknięta wartość ma pierwszeństwo, dopóki HA jej nie potwierdzi (maks. 20 s). */
+    private double ctlValue(Ctl c){
+        double[] info=ctlInfo(c.target.get());double v=info==null?Double.NaN:info[0];
+        if(c.pending!=null){
+            if(System.currentTimeMillis()>c.until||(Double.isFinite(v)&&Math.abs(v-c.pending)<1e-6&&!c.scheduled))c.pending=null;
+            else v=c.pending;
+        }
+        return v;
     }
-    private void adjustSetpoint(int sign){
-        double[] info=setpointInfo();
+    private String ctlText(Ctl c,double v){
+        if(!Double.isFinite(v))return "—";
+        double[] info=ctlInfo(c.target.get());double step=info==null||info[3]<=0?0.5:info[3];
+        int d=step>=1&&v==Math.rint(v)?0:step>=0.1?1:2;
+        return String.format(new Locale("pl","PL"),"%."+d+"f",v)+c.unit;
+    }
+    private void updateControls(){
+        for(Ctl c:ctls.values()){
+            if(c.view!=null){double v=ctlValue(c);String t=ctlText(c,v);if(!Double.isFinite(v)&&c.fallback!=null)t=c.fallback.get();c.view.setText(t);}
+            if(c.subView!=null&&c.sub!=null)c.subView.setText(c.sub.get());
+        }
+    }
+    private void adjustCtl(Ctl c,int sign){
+        double[] info=ctlInfo(c.target.get());
         if(info==null){
-            new AlertDialog.Builder(this).setTitle("Nie można zmienić").setMessage(states.isEmpty()?"Poczekaj na połączenie z Home Assistant.":"Encja temperatury zadanej musi być typu input_number, number lub climate. Przytrzymaj przycisk −/+, aby ją wybrać.").setPositiveButton("OK",null).show();return;}
+            if(states.isEmpty()){Toast.makeText(this,"Poczekaj na połączenie z Home Assistant",Toast.LENGTH_LONG).show();return;}
+            new AlertDialog.Builder(this).setTitle("Brak nastawy do zmiany")
+                .setMessage("Wybierz encję, którą można zmieniać w Home Assistant: input_number, number, climate lub water_heater.")
+                .setPositiveButton("Wybierz",(d,w)->c.choose.run()).setNegativeButton("Anuluj",null).show();return;}
         double step=info[3]>0?info[3]:0.5;
-        double base=pendingSet!=null?pendingSet:info[0];
+        double base=c.pending!=null?c.pending:info[0];
         double nv=Math.round((base+sign*step)/step)*step;
         nv=Math.max(info[1],Math.min(info[2],nv));
-        nv=Math.round(nv*100)/100.0;
-        pendingSet=nv;pendingUntil=System.currentTimeMillis()+20000;
-        updateHero();
-        handler.removeCallbacks(sendSet);setScheduled=true;handler.postDelayed(sendSet,900); // wysyłamy po chwili, gdy użytkownik skończy klikać
+        nv=Math.round(nv*1000)/1000.0;
+        c.pending=nv;c.until=System.currentTimeMillis()+20000;
+        updateControls();updateHero();
+        handler.removeCallbacks(c.sender);c.scheduled=true;handler.postDelayed(c.sender,900); // wysyłamy po chwili, gdy użytkownik skończy klikać
     }
-    private void sendSetpoint(){
-        if(pendingSet==null||!configured)return;
-        final double v=pendingSet;final String id=entity(M_SET),url=base,t=token;final int g=generation;
+    private void sendCtl(Ctl c){
+        if(c.pending==null||!configured)return;
+        final double v=c.pending;final String id=c.target.get(),url=base,t=token;final int g=generation;
+        if(id==null||id.indexOf('.')<0){c.pending=null;return;}
         final String domain=id.substring(0,id.indexOf('.'));
-        final String path=domain.equals("climate")?"/api/services/climate/set_temperature":"/api/services/"+domain+"/set_value";
+        final boolean temp=domain.equals("climate")||domain.equals("water_heater");
+        final String path="/api/services/"+domain+(temp?"/set_temperature":"/set_value");
         worker.execute(()->{try{
-            JSONObject body=new JSONObject();body.put("entity_id",id);body.put(domain.equals("climate")?"temperature":"value",v);
+            JSONObject body=new JSONObject();body.put("entity_id",id);body.put(temp?"temperature":"value",v);
             HaClient.post(url,t,path,body.toString());
             handler.post(()->{if(g!=generation||isDestroyed())return;
                 JSONObject s=states.get(id);
-                try{if(s!=null){if(domain.equals("climate")){JSONObject a=s.optJSONObject("attributes");if(a!=null)a.put("temperature",v);}else s.put("state",String.valueOf(v));}}catch(Exception ignored){}
-                Toast.makeText(this,String.format(new Locale("pl","PL"),"Ustawiono %.1f °C",v),Toast.LENGTH_SHORT).show();updateHero();});
-        }catch(Exception e){final String msg=e.getMessage();handler.post(()->{if(g!=generation||isDestroyed())return;pendingSet=null;
-            new AlertDialog.Builder(this).setTitle("Nie udało się zmienić temperatury").setMessage(msg==null?"Sprawdź połączenie":msg).setPositiveButton("OK",null).show();updateHero();});}});
+                try{if(s!=null){if(temp){JSONObject a=s.optJSONObject("attributes");if(a!=null)a.put("temperature",v);}else s.put("state",String.valueOf(v));}}catch(Exception ignored){}
+                Toast.makeText(this,"Ustawiono "+ctlText(c,v),Toast.LENGTH_SHORT).show();updateControls();updateHero();});
+        }catch(Exception e){final String msg=e.getMessage();handler.post(()->{if(g!=generation||isDestroyed())return;c.pending=null;
+            new AlertDialog.Builder(this).setTitle("Nie udało się zmienić nastawy").setMessage(msg==null?"Sprawdź połączenie":msg).setPositiveButton("OK",null).show();updateControls();updateHero();});}});
     }
-    private View roundButton(String label,Runnable r){
-        TextView b=text(label,26,GREEN);b.setGravity(Gravity.CENTER);
-        GradientDrawable d=shape(CARD,26);d.setStroke(dp(1.5f),LINE);b.setBackground(d);b.setElevation(dp(1));
-        b.setOnClickListener(v->r.run());b.setOnLongClickListener(v->{chooseMetric(M_SET);return true;});
-        b.setLayoutParams(new LinearLayout.LayoutParams(dp(52),dp(52)));return b;
+    private View roundButton(String label,int size,Runnable click,Runnable longClick){
+        TextView b=text(label,Math.round(size/2f),GREEN);b.setGravity(Gravity.CENTER);b.setIncludeFontPadding(false);
+        GradientDrawable d=shape(CARD,size/2);d.setStroke(dp(1.5f),LINE);b.setBackground(d);b.setElevation(dp(1));
+        b.setOnClickListener(v->click.run());b.setOnLongClickListener(v->{longClick.run();return true;});
+        b.setContentDescription(label.equals("+")?"Zwiększ":"Zmniejsz");
+        b.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));return b;
+    }
+    /** Wiersz [−] wartość [+]. */
+    private LinearLayout ctlRow(Ctl c,int size,int textSize,int gap){
+        LinearLayout r=row();r.setGravity(Gravity.CENTER);
+        r.addView(roundButton("−",size,()->adjustCtl(c,-1),c.choose));
+        TextView v=bold("—",textSize,TEXT);v.setGravity(Gravity.CENTER);v.setSingleLine(true);v.setPadding(dp(gap),0,dp(gap),0);
+        r.addView(v,new LinearLayout.LayoutParams(gap==0?0:-2,-2,gap==0?1:0));c.view=v;
+        r.addView(roundButton("+",size,()->adjustCtl(c,1),c.choose));
+        return r;
+    }
+    /** Karta z nastawą: ikona, tytuł, opis i sterowanie −/+. */
+    private void controlCard(int icon,int accent,String title,Ctl c,int historyMetric){
+        LinearLayout card=card();card.setPadding(dp(16),dp(16),dp(16),dp(14));
+        LinearLayout head=row();head.addView(badge(icon,accent,40));
+        LinearLayout t=column();t.setPadding(dp(12),0,0,0);t.addView(bold(title,15,TEXT));
+        TextView sub=text("",12,MUTED);t.addView(sub);c.subView=sub;
+        head.addView(t,new LinearLayout.LayoutParams(0,-2,1));card.addView(head);
+        LinearLayout r=ctlRow(c,46,24,22);r.setPadding(0,dp(12),0,0);card.addView(r);
+        card.setOnClickListener(v->{String id=c.target.get();if(ctlInfo(id)!=null)history(id,title);else if(!entity(historyMetric).isEmpty())history(historyMetric);else c.choose.run();});
+        card.setOnLongClickListener(v->{c.choose.run();return true;});
+        addFull(body,card,12);
+    }
+    private String roomTarget(String id){
+        String t=prefs.getString("room_set_"+id,"").trim();
+        return !t.isEmpty()?t:id.startsWith("climate.")?id:"";
+    }
+    private void chooseRoomTarget(String id){
+        pickEntity(roomName(id)+" — temperatura zadana",MainActivity::settable,e->{prefs.edit().putString("room_set_"+id,e).apply();render();});
     }
 
     /** Kółko z ikoną w kolorze akcentu. */
@@ -367,6 +461,7 @@ public class MainActivity extends Activity {
         for(String name:tabButtons.keySet()){View[] v=tabButtons.get(name);boolean sel=name.equals(tab);
             v[0].setBackground(sel?shape(GREEN_SOFT,16):null);((Icon)v[1]).set(TAB_ICONS[Arrays.asList(TABS).indexOf(name)],sel?GREEN:MUTED);
             ((TextView)v[2]).setTextColor(sel?GREEN:MUTED);((TextView)v[2]).setTypeface(Typeface.create(sel?"sans-serif-medium":"sans-serif",Typeface.NORMAL));}
+        for(Ctl c:ctls.values()){c.view=null;c.subView=null;}
         if(tab.equals("Dom")){renderRooms();updateCards();return;}
         int accent=accentFor(tab);
         ArrayList<Integer> list=new ArrayList<>();
@@ -375,6 +470,13 @@ public class MainActivity extends Activity {
         if(tab.equals("Kocioł")&&list.contains(M_SET))list.set(list.indexOf(M_SET),M_CURVE_SET);
         if(tab.equals("Kocioł")){
             renderDiagram();
+            list.remove(Integer.valueOf(M_CURVE));
+            Ctl curve=ctl("curve",()->entity(M_CURVE_CTL),"",()->chooseMetric(M_CURVE_CTL));
+            curve.fallback=()->entity(M_CURVE).isEmpty()?"—":value(M_CURVE,true);
+            curve.sub=()->{
+                if(ctlInfo(entity(M_CURVE_CTL))==null)return states.isEmpty()?"Oczekiwanie na dane":"Tylko odczyt — przytrzymaj −/+, aby wybrać nastawę krzywej";
+                return entity(M_CURVE_SET).isEmpty()?"Nachylenie krzywej grzewczej":"Zadana zasilania z krzywej: "+shortValue(M_CURVE_SET);};
+            controlCard(Icon.CHART,GREEN,"Krzywa grzewcza",curve,M_CURVE);
             body.addView(section("Parametry"));
         }else{
             int hero=tab.equals("Gaz")?M_GAS_TODAY:tab.equals("Prąd")?4:19;
@@ -490,7 +592,7 @@ public class MainActivity extends Activity {
         diagram.setHealth(healthLevel());
     }
     private void updateCards(){
-        updateRooms();updateDiagram();updateHero();updateAlarms();
+        updateRooms();updateDiagram();updateHero();updateAlarms();updateControls();
         for(Integer i:values.keySet()){
             TextView val=values.get(i),sub=details.get(i);val.setTextColor(TEXT);
             if(entity(i).isEmpty()){val.setText("Wybierz czujnik");val.setTextColor(GREEN);sub.setText("Dotknij, aby połączyć");continue;}
@@ -506,11 +608,15 @@ public class MainActivity extends Activity {
     }
 
     private void chooseMetric(int index){
+        pickEntity(metrics[index][1]+" — wybierz czujnik",id->id.startsWith("sensor.")||id.startsWith("binary_sensor.")||id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("input_boolean.")||id.startsWith("switch.")||id.startsWith("climate.")||id.startsWith("water_heater."),
+            id->{prefs.edit().putString("entity_"+index,id).apply();render();});
+    }
+    private void pickEntity(String title,java.util.function.Predicate<String> accept,java.util.function.Consumer<String> picked){
         if(states.isEmpty()){Toast.makeText(this,"Poczekaj na połączenie z Home Assistant",Toast.LENGTH_LONG).show();return;}
         LinearLayout form=column();form.setPadding(dp(16),dp(8),dp(16),0);
         EditText search=new EditText(this);search.setSingleLine(true);search.setHint("Szukaj: moc, power, pompa…");form.addView(search);
         ListView list=new ListView(this);form.addView(list,new LinearLayout.LayoutParams(-1,dp(320)));
-        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(id.startsWith("sensor.")||id.startsWith("binary_sensor.")||id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("input_boolean.")||id.startsWith("switch.")||id.startsWith("climate."))ids.add(id);
+        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(accept.test(id))ids.add(id);
         Collections.sort(ids);ArrayList<String> shown=new ArrayList<>();
         ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<>());list.setAdapter(adapter);
         Runnable filter=()->{String q=search.getText().toString().toLowerCase(Locale.ROOT);shown.clear();adapter.clear();
@@ -518,8 +624,8 @@ public class MainActivity extends Activity {
                 if(label.toLowerCase(Locale.ROOT).contains(q)){shown.add(id);adapter.add(label);}}
         };filter.run();
         search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){filter.run();}public void afterTextChanged(android.text.Editable e){}});
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(metrics[index][1]+" — wybierz czujnik").setView(form).setNegativeButton("Anuluj",null).create();
-        list.setOnItemClickListener((parent,view,position,id)->{prefs.edit().putString("entity_"+index,shown.get(position)).apply();dialog.dismiss();render();});dialog.show();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(form).setNegativeButton("Anuluj",null).create();
+        list.setOnItemClickListener((parent,view,position,id)->{String chosen=shown.get(position);dialog.dismiss();picked.accept(chosen);});dialog.show();
     }
 
     private Set<String> selectedRooms(){
@@ -540,9 +646,10 @@ public class MainActivity extends Activity {
         ring.setOnClickListener(v->{if(entity(M_HOUSE).isEmpty())chooseMetric(M_HOUSE);else history(M_HOUSE);});
         // Sterowanie temperaturą zadaną: − / +
         LinearLayout ctl=row();ctl.setGravity(Gravity.CENTER);ctl.setPadding(0,dp(4),0,dp(6));
-        ctl.addView(roundButton("−",()->adjustSetpoint(-1)));
+        Ctl set=ctl("set",()->entity(M_SET),"°C",()->chooseMetric(M_SET));
+        ctl.addView(roundButton("−",52,()->adjustCtl(set,-1),set.choose));
         TextView ctlLabel=text("Temperatura zadana",13,MUTED);ctlLabel.setGravity(Gravity.CENTER);ctlLabel.setPadding(dp(16),0,dp(16),0);ctl.addView(ctlLabel);
-        ctl.addView(roundButton("+",()->adjustSetpoint(1)));
+        ctl.addView(roundButton("+",52,()->adjustCtl(set,1),set.choose));
         hero.addView(ctl);
         LinearLayout chips=row();chips.setGravity(Gravity.CENTER);chips.setPadding(0,dp(6),0,0);
         LinearLayout c1=row();c1.setBackground(shape(BG,14));c1.setPadding(dp(10),dp(6),dp(12),dp(6));
@@ -556,7 +663,13 @@ public class MainActivity extends Activity {
         c2.setOnClickListener(v->{tab="Kocioł";prefs.edit().putString("tab",tab).apply();render();});
         LinearLayout.LayoutParams c2p=new LinearLayout.LayoutParams(-2,-2);c2p.leftMargin=dp(8);chips.addView(c2,c2p);
         hero.addView(chips);
-        addFull(body,hero,6);
+        addFull(body,hero,12);
+        // Ciepła woda użytkowa
+        Ctl dhw=ctl("dhw",()->entity(M_DHW_SET),"°C",()->chooseMetric(M_DHW_SET));
+        dhw.sub=()->{String in=entity(M_DHW).isEmpty()?"":"W zasobniku "+shortValue(M_DHW);
+            if(ctlInfo(entity(M_DHW_SET))==null)return (in.isEmpty()?"":in+" • ")+(states.isEmpty()?"Oczekiwanie na dane":"przytrzymaj −/+, aby wybrać nastawę");
+            return in.isEmpty()?"Temperatura zadana":in;};
+        controlCard(Icon.DROP,BLUE,"Ciepła woda (CWU)",dhw,M_DHW);
         // Pomieszczenia
         LinearLayout sh=row();TextView st=section("Pomieszczenia");sh.addView(st,new LinearLayout.LayoutParams(0,-2,1));
         TextView edit=bold("Edytuj",14,GREEN);edit.setPadding(dp(12),dp(10),dp(6),dp(10));edit.setOnClickListener(v->chooseRooms());sh.addView(edit);
@@ -569,27 +682,28 @@ public class MainActivity extends Activity {
             TextView name=text(roomName(id),13,MUTED);name.setPadding(0,dp(10),0,0);name.setMaxLines(2);c.addView(name);
             TextView value=text("—",26,TEXT);value.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));c.addView(value);
             TextView updated=text("Oczekiwanie na dane",11,MUTED);c.addView(updated);
+            // Nastawa grzejnika / termostatu: − zadana +
+            Ctl rc=ctl("room:"+id,()->roomTarget(id),"°",()->chooseRoomTarget(id));
+            LinearLayout r=ctlRow(rc,34,15,0);r.setPadding(0,dp(10),0,0);c.addView(r);
             roomViews.put(id,new TextView[]{name,value,updated});
             c.setOnClickListener(v->history(id,roomName(id)));
-            c.setOnLongClickListener(v->{EditText label=new EditText(this);label.setText(roomName(id));label.setSingleLine(true);
-                new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();return true;});
+            c.setOnLongClickListener(v->{new AlertDialog.Builder(this).setTitle(roomName(id)).setItems(new CharSequence[]{"Zmień nazwę","Wybierz encję temperatury zadanej"},(dd,which)->{
+                if(which==1){chooseRoomTarget(id);return;}
+                EditText label=new EditText(this);label.setText(roomName(id));label.setSingleLine(true);
+                new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();}).show();return true;});
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);k++;
         }
         if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
         if(roomViews.isEmpty())body.addView(text("Dodaj czujniki przyciskiem „Edytuj”.",15,MUTED));
-        TextView help=text("Dotknij kafelka, aby zobaczyć historię 24 h. Przytrzymaj, aby zmienić nazwę.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
+        TextView help=text("Dotknij kafelka, aby zobaczyć historię 24 h. Przytrzymaj, aby zmienić nazwę lub wybrać encję temperatury zadanej grzejnika (−/+).",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
     }
     private void updateHero(){
         if(ring==null)return;
         Locale pl=new Locale("pl","PL");
         String house=getTemperature(entity(M_HOUSE));double t=Double.NaN,set=Double.NaN;
         try{t=Double.parseDouble(house);}catch(Exception ignored){}
-        set=currentSetpoint();
-        if(pendingSet!=null){
-            // Pokazujemy nową wartość od razu; czyścimy, gdy HA potwierdzi lub minie limit czasu
-            if(System.currentTimeMillis()>pendingUntil||(Double.isFinite(set)&&Math.abs(set-pendingSet)<0.001&&!setScheduled))pendingSet=null;
-            else set=pendingSet;
-        }
+        Ctl sc=ctls.get("set");set=sc==null?Double.NaN:ctlValue(sc);
+        if(!Double.isFinite(set)){JSONObject s=entity(M_SET).isEmpty()?null:states.get(entity(M_SET));try{set=Double.parseDouble(s.optString("state"));}catch(Exception ignored){}}
         String value=Double.isFinite(t)?String.format(pl,"%.1f°",t):"—";
         String bottom=Double.isFinite(set)?String.format(pl,"Zadana %.1f°C",set):"Temperatura zadana —";
         ring.set(value,"W domu",bottom,Double.isFinite(t)?(float)((t-10)/20):0,Double.isFinite(set)?(float)((set-10)/20):-1);
