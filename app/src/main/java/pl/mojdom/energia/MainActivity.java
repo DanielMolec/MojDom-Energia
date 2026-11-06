@@ -53,9 +53,11 @@ public class MainActivity extends Activity {
         {"Krzywa", "Temperatura zadana z krzywej", ""},
         {"Serwis", "Kod błędu kotła", ""},
         {"Sterowanie", "Krzywa grzewcza — nastawa", ""},
-        {"Sterowanie", "Temperatura zadana CWU", ""}
+        {"Sterowanie", "Temperatura zadana CWU", ""},
+        {"Schemat", "Podłogówka — zasilanie", ""},
+        {"Schemat", "Podłogówka — powrót", ""}
     };
-    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28,M_ERROR=29,M_PRESSURE=12,M_SERVICE=20,M_TECH=21,M_CURVE=13,M_CURVE_CTL=30,M_DHW_SET=31;
+    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28,M_ERROR=29,M_PRESSURE=12,M_SERVICE=20,M_TECH=21,M_CURVE=13,M_CURVE_CTL=30,M_DHW_SET=31,M_UFH_FLOW=32,M_UFH_RET=33;
     // Metryki pokazane na schemacie — nie powtarzamy ich w kafelkach
     private static final Set<Integer> ON_DIAGRAM=new HashSet<>(Arrays.asList(M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW));
     private static final String[] TABS={"Dom","Gaz","Prąd","Kocioł","Serwis"};
@@ -117,6 +119,7 @@ public class MainActivity extends Activity {
         if(i==M_ERROR&&id.isEmpty())return detectErrorEntity();
         if(i==M_CURVE_CTL&&id.isEmpty())return detectCurveControl();
         if(i==M_DHW_SET&&id.isEmpty())return detectDhwSetpoint();
+        if((i==M_UFH_FLOW||i==M_UFH_RET)&&id.isEmpty())return detectUfh(i==M_UFH_FLOW);
         return id;
     }
     /** Gdy użytkownik nie wybrał czujnika: szuka w HA encji z temperaturą zadaną wyliczoną z krzywej grzewczej. */
@@ -133,6 +136,145 @@ public class MainActivity extends Activity {
         }
         return best;
     }
+    /** Gdy nie wybrano czujnika: szuka temperatury zasilania / powrotu podłogówki. */
+    private String detectUfh(boolean flow){
+        String best="";int score=0;
+        for(String id:states.keySet()){
+            if(!id.startsWith("sensor."))continue;
+            String n=norm(id+" "+friendly(id));int sc=0;
+            if(n.contains("podlog")||n.contains("ufh")||n.contains("underfloor")||n.contains("floor_heat"))sc=1;
+            if(sc>0&&(flow?(n.contains("zasil")||n.contains("flow")||n.contains("supply")):(n.contains("powrot")||n.contains("return"))))sc=3;
+            if(sc>score){score=sc;best=id;}
+        }
+        return score>=3?best:"";
+    }
+    private String friendly(String id){JSONObject s=states.get(id);JSONObject a=s==null?null:s.optJSONObject("attributes");return a==null?"":a.optString("friendly_name","");}
+    /** Małe litery bez polskich znaków, inne znaki → „_”. */
+    private static String norm(String t){
+        t=t.toLowerCase(Locale.ROOT);StringBuilder b=new StringBuilder();
+        for(char ch:t.toCharArray()){int k="ąćęłńóśźż".indexOf(ch);if(k>=0)ch="acelnoszz".charAt(k);b.append(Character.isLetterOrDigit(ch)?ch:'_');}
+        return b.toString();
+    }
+
+    // ===== Pomieszczenia na schemacie (przekrój domu) =====
+    private static final Map<String,String[]> SLOTS=new LinkedHashMap<>();
+    static{
+        // klucz → {nazwa domyślna, kondygnacja, słowa do automatycznego dopasowania czujnika}
+        SLOTS.put("p2_kor",new String[]{"Korytarz","PIĘTRO 2","korytarz"});
+        SLOTS.put("p2_laz",new String[]{"Łazienka","PIĘTRO 2","lazienk"});
+        SLOTS.put("p2_pok1",new String[]{"Pokój 1","PIĘTRO 2","pokoj_1|pokoj1"});
+        SLOTS.put("p2_pok2",new String[]{"Pokój 2","PIĘTRO 2","pokoj_2|pokoj2"});
+        SLOTS.put("p1_syp",new String[]{"Sypialnia","PIĘTRO 1","sypialn"});
+        SLOTS.put("p1_laz",new String[]{"Łazienka","PIĘTRO 1","lazienk"});
+        SLOTS.put("p1_sal",new String[]{"Salon","PIĘTRO 1","salon"});
+        SLOTS.put("p1_kor",new String[]{"Korytarz","PIĘTRO 1","korytarz"});
+        SLOTS.put("klatka",new String[]{"Klatka","KLATKA SCHODOWA","klatk|schod"});
+    }
+    private boolean slotEditable(String key){int i=Arrays.asList(BoilerDiagram.ROOM_KEYS).indexOf(key);return i>=0&&BoilerDiagram.ROOM_EDITABLE[i];}
+    private String slotName(String key){String n=prefs.getString("slot_name_"+key,"").trim();return n.isEmpty()?SLOTS.get(key)[0]:n;}
+    /** Czujnik temperatury pomieszczenia: wybrany ręcznie albo dopasowany po nazwie (tylko gdy jednoznaczny). */
+    private String slotTemp(String key){
+        String id=prefs.getString("slot_temp_"+key,"").trim();if(!id.isEmpty())return id;
+        String[] words=SLOTS.get(key)[2].split("\\|");boolean twoFloors=key.endsWith("_laz")||key.endsWith("_kor");
+        String[] floorHints=key.startsWith("p2")?new String[]{"pietro_2","pietro2","2_pietro","gora","poddasze"}:new String[]{"pietro_1","pietro1","1_pietro","parter","dol"};
+        String found="";int count=0;
+        for(String sid:states.keySet()){
+            if(!(sid.startsWith("sensor.")||sid.startsWith("climate.")))continue;
+            JSONObject st=states.get(sid);JSONObject a=st.optJSONObject("attributes");if(a==null)continue;
+            boolean temp=sid.startsWith("climate.")?a.has("current_temperature"):("temperature".equals(a.optString("device_class"))||a.optString("unit_of_measurement").equals("°C"));
+            if(!temp)continue;
+            String n=norm(sid+" "+a.optString("friendly_name",""));boolean hit=false;
+            for(String w:words)if(n.contains(w))hit=true;
+            if(!hit||n.contains("zadan")||n.contains("target")||n.contains("setpoint"))continue;
+            if(twoFloors){boolean fl=false;for(String h:floorHints)if(n.contains(h))fl=true;if(!fl)continue;}
+            found=sid;count++;
+        }
+        if(count==1)return found;
+        if(key.equals("p1_kor"))return entity(M_HOUSE); // czujnik regulatora na korytarzu
+        return "";
+    }
+    private String slotSet(String key){
+        String id=prefs.getString("slot_set_"+key,"").trim();if(!id.isEmpty())return id;
+        String t=slotTemp(key);return t.startsWith("climate.")?t:"";
+    }
+    private Ctl slotCtl(String key){Ctl c=ctls.get("slot:"+key);if(c==null)c=ctl("slot:"+key,()->slotSet(key),"°",()->chooseSlotSet(key));return c;}
+    private void chooseSlotTemp(String key){pickEntity(slotName(key)+" — czujnik temperatury",id->id.startsWith("sensor.")||id.startsWith("climate."),e->{prefs.edit().putString("slot_temp_"+key,e).apply();render();});}
+    private void chooseSlotSet(String key){pickEntity(slotName(key)+" — temperatura zadana",MainActivity::settable,e->{prefs.edit().putString("slot_set_"+key,e).apply();render();});}
+    private String slotTempText(String key){
+        String id=slotTemp(key);if(id.isEmpty())return "—";
+        try{double v=Double.parseDouble(getTemperature(id));if(Double.isFinite(v))return String.format(new Locale("pl","PL"),"%.1f°",v);}catch(Exception ignored){}
+        return "—";
+    }
+    /** Odświeża pomieszczenia na schemacie (temperatura i — dla edytowalnych — temperatura zadana). */
+    private void updateDiagramRooms(){
+        if(diagram==null)return;
+        for(String key:BoilerDiagram.ROOM_KEYS){
+            boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;
+            if(key.equals("klatka")){sub="oba piętra";subColor=BLUE;}
+            else if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);sub=slotSet(key).isEmpty()?"ustaw":"zadana "+ctlText(c,v);}
+            diagram.setRoom(key,slotName(key),slotTempText(key),sub,subColor,ed);
+        }
+    }
+    private void roomMenu(String key){
+        ArrayList<String> items=new ArrayList<>(Arrays.asList("Zmień nazwę","Wybierz czujnik temperatury"));
+        if(slotEditable(key))items.add("Wybierz encję temperatury zadanej");
+        new AlertDialog.Builder(this).setTitle(slotName(key)).setItems(items.toArray(new CharSequence[0]),(d,w)->{
+            if(w==1){chooseSlotTemp(key);return;}if(w==2){chooseSlotSet(key);return;}
+            EditText label=new EditText(this);label.setText(slotName(key));label.setSingleLine(true);
+            new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(dd,ww)->{prefs.edit().putString("slot_name_"+key,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();
+        }).show();
+    }
+    private void roomTap(String key){
+        if(slotTemp(key).isEmpty()){chooseSlotTemp(key);return;}
+        if(!slotEditable(key)){history(slotTemp(key),slotName(key));return;}
+        roomSheet(key);
+    }
+    /** Okienko od dołu ekranu: temperatura teraz, temperatura zadana z −/+, historia. */
+    private void roomSheet(String key){
+        Ctl c=slotCtl(key);
+        Dialog d=new Dialog(this);
+        LinearLayout v=column();v.setPadding(dp(22),dp(12),dp(22),dp(26));
+        GradientDrawable bg=new GradientDrawable();bg.setColor(CARD);float r=dp(26);bg.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});bg.setStroke(dp(1),alpha(GOLD,100));v.setBackground(bg);
+        View handle=new View(this);handle.setBackground(shape(Color.rgb(59,69,88),2));LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(40),dp(4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.bottomMargin=dp(14);v.addView(handle,hp);
+        TextView fl=text(SLOTS.get(key)[1],12,MUTED);fl.setLetterSpacing(0.12f);v.addView(fl);
+        TextView name=bold(slotName(key),22,TEXT);v.addView(name);
+        String now=slotTempText(key);
+        TextView nowT=text(now.equals("—")?"Teraz —":"Teraz "+now+"C",13,MUTED);nowT.setPadding(0,dp(4),0,0);v.addView(nowT);
+        if(slotSet(key).isEmpty()){
+            TextView info=text("Nie wybrano encji temperatury zadanej. Wybierz encję typu input_number, number lub climate z Home Assistant.",14,MUTED);info.setPadding(0,dp(16),0,dp(8));v.addView(info);
+            TextView pick=bold("Wybierz encję",15,BG);pick.setGravity(Gravity.CENTER);pick.setBackground(shape(GOLD,14));pick.setPadding(0,dp(14),0,dp(14));
+            pick.setOnClickListener(x->{d.dismiss();chooseSlotSet(key);});v.addView(pick,new LinearLayout.LayoutParams(-1,-2));
+        }else{
+            LinearLayout ctlRow=row();ctlRow.setGravity(Gravity.CENTER);ctlRow.setPadding(0,dp(22),0,dp(8));
+            ctlRow.addView(roundButton("−",64,()->adjustCtl(c,-1),c.choose));
+            LinearLayout mid=column();mid.setGravity(Gravity.CENTER_HORIZONTAL);mid.setPadding(dp(24),0,dp(24),0);
+            mid.addView(text("Zadana",12,MUTED));
+            TextView val=text("—",40,GOLD);val.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));mid.addView(val);c.view=val;
+            ctlRow.addView(mid);
+            ctlRow.addView(roundButton("+",64,()->adjustCtl(c,1),c.choose));
+            v.addView(ctlRow);
+        }
+        LinearLayout btns=row();btns.setPadding(0,dp(16),0,0);
+        TextView hist=text("Historia 24 h",14,MUTED);hist.setGravity(Gravity.CENTER);GradientDrawable hb=shape(CARD,14);hb.setStroke(dp(1),Color.rgb(42,53,80));hist.setBackground(hb);hist.setPadding(0,dp(13),0,dp(13));
+        hist.setOnClickListener(x->{d.dismiss();history(slotTemp(key),slotName(key));});
+        TextView ok=bold("Gotowe",14,BG);ok.setGravity(Gravity.CENTER);ok.setBackground(shape(GOLD,14));ok.setPadding(0,dp(13),0,dp(13));ok.setOnClickListener(x->d.dismiss());
+        LinearLayout.LayoutParams b1=new LinearLayout.LayoutParams(0,-2,1);b1.rightMargin=dp(6);btns.addView(hist,b1);
+        LinearLayout.LayoutParams b2=new LinearLayout.LayoutParams(0,-2,1);b2.leftMargin=dp(6);btns.addView(ok,b2);
+        v.addView(btns);
+        d.setContentView(v);
+        Window w=d.getWindow();
+        if(w!=null){w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));w.setLayout(-1,-2);w.setGravity(Gravity.BOTTOM);w.setDimAmount(0.6f);}
+        d.setOnDismissListener(x->c.view=null);
+        d.show();updateControls();
+    }
+    /** Zawór 3-drogowy w pozycji CWU (≥ 50 % albo stan typu „cwu”, „dhw”, „on”). */
+    private boolean valveOnDhw(){
+        JSONObject s=entity(M_VALVE).isEmpty()?null:states.get(entity(M_VALVE));if(s==null)return false;
+        String st=norm(s.optString("state",""));
+        if(st.equals("on")||st.contains("cwu")||st.contains("dhw")||st.contains("hwc")||st.contains("water")||st.contains("woda"))return true;
+        try{return Double.parseDouble(s.optString("state"))>=50;}catch(Exception e){return false;}
+    }
+
     private static boolean settable(String id){return id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("climate.")||id.startsWith("water_heater.");}
     /** Gdy nie wybrano encji: szuka w HA nastawy krzywej grzewczej, którą można zmieniać (number / input_number). */
     private String detectCurveControl(){
@@ -317,6 +459,7 @@ public class MainActivity extends Activity {
         return String.format(new Locale("pl","PL"),"%."+d+"f",v)+c.unit;
     }
     private void updateControls(){
+        updateDiagramRooms();
         for(Ctl c:ctls.values()){
             if(c.view!=null){double v=ctlValue(c);String t=ctlText(c,v);if(!Double.isFinite(v)&&c.fallback!=null)t=c.fallback.get();c.view.setText(t);}
             if(c.subView!=null&&c.sub!=null)c.subView.setText(c.sub.get());
@@ -529,11 +672,15 @@ public class MainActivity extends Activity {
         TextView t=bold("Instalacja",17,TEXT);head.addView(t,new LinearLayout.LayoutParams(0,-2,1));
         head.addView(text("Dotknij wartości",12,MUTED));
         frame.addView(head);
-        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW);
+        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_OUTSIDE,M_DHW,M_UFH_FLOW);
         diagram.setListener(new BoilerDiagram.Listener(){
             public void onTap(int i){if(entity(i).isEmpty())chooseMetric(i);else history(i);}
-            public void onLongPress(int i){chooseMetric(i);}
+            public void onLongPress(int i){
+                if(i==M_UFH_FLOW){new AlertDialog.Builder(MainActivity.this).setTitle("Podłogówka").setItems(new CharSequence[]{"Czujnik zasilania","Czujnik powrotu"},(d,w)->chooseMetric(w==0?M_UFH_FLOW:M_UFH_RET)).show();return;}
+                chooseMetric(i);}
             public void onHealthTap(){tab="Serwis";prefs.edit().putString("tab",tab).apply();render();scroll.scrollTo(0,0);}
+            public void onRoomTap(String key){roomTap(key);}
+            public void onRoomLongPress(String key){roomMenu(key);}
         });
         frame.addView(diagram,new LinearLayout.LayoutParams(-1,-2));
         addFull(body,frame,12);
@@ -594,7 +741,10 @@ public class MainActivity extends Activity {
         if(gasToday!=null)gasToday.setText(shortValue(M_GAS_TODAY));
         for(int i:ON_DIAGRAM)diagram.setValue(i,shortValue(i));
         boolean burner=burnerOn();
-        diagram.setState(burner,pumpSpeed(burner),fanSpeed(burner));
+        diagram.setState(burner,pumpSpeed(burner),fanSpeed(burner),valveOnDhw());
+        String uf=entity(M_UFH_FLOW).isEmpty()?"":shortValue(M_UFH_FLOW),ur=entity(M_UFH_RET).isEmpty()?"":shortValue(M_UFH_RET);
+        diagram.setValue(M_UFH_FLOW,uf.isEmpty()&&ur.isEmpty()?"podłogówka — wybierz czujnik":"podłoga"+(uf.isEmpty()?"":" ↑"+uf)+(ur.isEmpty()?"":" ↓"+ur));
+        updateDiagramRooms();
         diagram.setHealth(healthLevel());
     }
     private void updateCards(){
