@@ -25,7 +25,7 @@ final class BoilerDiagram extends View {
     static final String[] ROOM_KEYS = {"p2_kor", "p2_laz", "p2_mik", "p2_adr", "p2_cio", "p1_syp", "p1_laz", "p1_sal", "p1_kor", "klatka"};
     private static final float[][] ROOM_POS = {{55, 128, 46}, {105, 122, 46}, {155, 122, 46}, {205, 122, 46}, {255, 122, 46},
         {61, 244, 54}, {124, 244, 54}, {186, 244, 54}, {249, 238, 54}, {304, 222, 46}};
-    static final boolean[] ROOM_EDITABLE = {false, true, true, true, true, false, false, false, true, false};
+    static final boolean[] ROOM_EDITABLE = {false, true, true, true, true, false, false, false, true, true};
     private static final float[] P2_X = {55, 105, 155, 205, 255}; // grzejniki piętra 2
     private static final float SUP_X = 276, RET_X = 272, STAIR_X = 280; // pion zasilania/powrotu przy ścianie klatki
 

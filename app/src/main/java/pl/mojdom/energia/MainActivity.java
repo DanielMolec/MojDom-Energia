@@ -169,7 +169,7 @@ public class MainActivity extends Activity {
         SLOTS.put("p1_laz",new String[]{"Łazienka","PIĘTRO 1","lazienk"});
         SLOTS.put("p1_sal",new String[]{"Salon","PIĘTRO 1","salon"});
         SLOTS.put("p1_kor",new String[]{"Korytarz","PIĘTRO 1","korytarz"});
-        SLOTS.put("klatka",new String[]{"Klatka","KLATKA SCHODOWA","klatk|schod"});
+        SLOTS.put("klatka",new String[]{"Klatka","KLATKA SCHODOWA • OBA PIĘTRA","klatk|schod"});
     }
     private boolean slotEditable(String key){int i=Arrays.asList(BoilerDiagram.ROOM_KEYS).indexOf(key);return i>=0&&BoilerDiagram.ROOM_EDITABLE[i];}
     private String slotName(String key){String n=prefs.getString("slot_name_"+key,"").trim();return n.isEmpty()?SLOTS.get(key)[0]:n;}
@@ -212,8 +212,7 @@ public class MainActivity extends Activity {
         if(diagram==null)return;
         for(String key:BoilerDiagram.ROOM_KEYS){
             boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;
-            if(key.equals("klatka")){sub="oba piętra";subColor=BLUE;}
-            else if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);sub=slotSet(key).isEmpty()?"ustaw":"zad. "+ctlText(c,v);}
+            if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);sub=slotSet(key).isEmpty()?"ustaw":"zad. "+ctlText(c,v);}
             diagram.setRoom(key,slotName(key),slotTempText(key),sub,subColor,ed);
         }
     }
