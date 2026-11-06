@@ -213,7 +213,7 @@ public class MainActivity extends Activity {
         for(String key:BoilerDiagram.ROOM_KEYS){
             boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;
             if(key.equals("klatka")){sub="oba piętra";subColor=BLUE;}
-            else if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);sub=slotSet(key).isEmpty()?"ustaw":"zadana "+ctlText(c,v);}
+            else if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);sub=slotSet(key).isEmpty()?"ustaw":"zad. "+ctlText(c,v);}
             diagram.setRoom(key,slotName(key),slotTempText(key),sub,subColor,ed);
         }
     }
