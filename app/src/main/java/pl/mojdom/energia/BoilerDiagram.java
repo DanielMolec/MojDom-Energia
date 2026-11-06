@@ -16,7 +16,7 @@ final class BoilerDiagram extends View {
     private static final float W = 500, H = 285;
     private static final int RED = Color.rgb(234, 88, 52), BLUE = Color.rgb(59, 130, 222);
     private static final int ORANGE = Color.rgb(245, 158, 11), SKY = Color.rgb(96, 180, 240);
-    private static final int LABEL_BG = Color.rgb(30, 41, 59), OUTLINE = Color.rgb(107, 114, 128);
+    private static final int LABEL_BG = Color.rgb(24, 34, 54), OUTLINE = Color.argb(200, 245, 184, 46); // dom w złotym konturze (styl „Złota noc”)
 
     private static final class Label {
         final int metric, kind; final float cx, cy; String text = "—"; final RectF hit = new RectF();
@@ -144,7 +144,7 @@ final class BoilerDiagram extends View {
     }
 
     private void drawHouse(Canvas c) {
-        stroke.setColor(OUTLINE); stroke.setStrokeWidth(4); stroke.setPathEffect(null);
+        stroke.setColor(OUTLINE); stroke.setStrokeWidth(3.5f); stroke.setPathEffect(null);
         tmp.reset();
         tmp.moveTo(250, 258); tmp.lineTo(250, 118); tmp.lineTo(358, 24); tmp.lineTo(472, 118); tmp.lineTo(472, 258); tmp.close();
         c.drawPath(tmp, stroke);
@@ -233,7 +233,7 @@ final class BoilerDiagram extends View {
 
     /** Ikona stanu kotła: zielony znaczek = wszystko OK, żółty/czerwony wykrzyknik = ostrzeżenie/alarm. */
     private void drawHealth(Canvas c) {
-        int col = health == HEALTH_OK ? Color.rgb(0, 145, 126) : health == HEALTH_WARN ? Color.rgb(245, 158, 11)
+        int col = health == HEALTH_OK ? Color.rgb(34, 197, 94) : health == HEALTH_WARN ? Color.rgb(245, 158, 11)
             : health == HEALTH_ALARM ? Color.rgb(214, 64, 69) : Color.rgb(148, 163, 184);
         fill.setShader(null);
         fill.setColor(Color.argb(40, 0, 0, 0)); c.drawCircle(HX, HY + 1.5f, HR, fill);

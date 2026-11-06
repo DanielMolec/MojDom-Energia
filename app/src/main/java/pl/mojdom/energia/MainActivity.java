@@ -15,10 +15,10 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 
 public class MainActivity extends Activity {
-    // Paleta inspirowana aplikacjami producentów kotłów: jasne tło, białe karty, morski akcent
-    private static final int BG=Color.rgb(242,245,247), CARD=Color.WHITE, TEXT=Color.rgb(28,43,51), MUTED=Color.rgb(110,124,135),
-        GREEN=Color.rgb(0,145,126), GREEN_SOFT=Color.rgb(217,240,236), LINE=Color.rgb(226,232,236),
-        ORANGE=Color.rgb(232,119,46), BLUE=Color.rgb(47,111,222), PURPLE=Color.rgb(124,77,190), RED=Color.rgb(214,64,69);
+    // Styl „Złota noc”: granatowo-czarne tło, ciemne karty ze złotą obwódką, złoty akcent z poświatą
+    private static final int BG=Color.rgb(11,18,32), CARD=Color.rgb(18,26,43), NAV=Color.rgb(14,22,38), TEXT=Color.rgb(243,244,246), MUTED=Color.rgb(154,164,181),
+        GOLD=Color.rgb(245,184,46), GOLD_SOFT=Color.argb(38,245,184,46), LINE=Color.argb(46,245,184,46), OK=Color.rgb(74,222,128),
+        ORANGE=Color.rgb(251,146,60), BLUE=Color.rgb(125,211,252), PURPLE=Color.rgb(192,132,252), RED=Color.rgb(248,113,113);
     // Default IDs follow the user's supplied HA configuration; all can be edited.
     // UWAGA: kolejność musi zostać zachowana (ustawienia zapisane są jako entity_<indeks>).
     private final String[][] metrics={
@@ -79,8 +79,8 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
-        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(CARD);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(NAV);
+        getWindow().getDecorView().setSystemUiVisibility(0);
         prefs=getSharedPreferences("settings",0);secrets=new TokenStore(this);
         migrate();
         base=prefs.getString("base","");
@@ -254,7 +254,7 @@ public class MainActivity extends Activity {
         if(alarmBox==null)return;
         alarmBox.removeAllViews();
         ArrayList<Object[]> list=alarms();int lvl=healthLevel();
-        int col=lvl==BoilerDiagram.HEALTH_ALARM?RED:lvl==BoilerDiagram.HEALTH_WARN?ORANGE:lvl==BoilerDiagram.HEALTH_OK?GREEN:MUTED;
+        int col=lvl==BoilerDiagram.HEALTH_ALARM?RED:lvl==BoilerDiagram.HEALTH_WARN?ORANGE:lvl==BoilerDiagram.HEALTH_OK?OK:MUTED;
         LinearLayout head=row();
         head.addView(badge(lvl==BoilerDiagram.HEALTH_OK?Icon.CHECK:lvl==BoilerDiagram.HEALTH_UNKNOWN?Icon.CLOCK:Icon.ALERT,col,44));
         LinearLayout t=column();t.setPadding(dp(14),0,0,0);
@@ -356,8 +356,9 @@ public class MainActivity extends Activity {
             new AlertDialog.Builder(this).setTitle("Nie udało się zmienić nastawy").setMessage(msg==null?"Sprawdź połączenie":msg).setPositiveButton("OK",null).show();updateControls();updateHero();});}});
     }
     private View roundButton(String label,int size,Runnable click,Runnable longClick){
-        TextView b=text(label,Math.round(size/2f),GREEN);b.setGravity(Gravity.CENTER);b.setIncludeFontPadding(false);
-        GradientDrawable d=shape(CARD,size/2);d.setStroke(dp(1.5f),LINE);b.setBackground(d);b.setElevation(dp(1));
+        boolean plus=label.equals("+")&&size>=46;
+        TextView b=text(label,Math.round(size/2f),plus?BG:GOLD);b.setGravity(Gravity.CENTER);b.setIncludeFontPadding(false);
+        GradientDrawable d=shape(plus?GOLD:BG,size/2);d.setStroke(dp(1.5f),alpha(GOLD,plus?255:160));b.setBackground(d);glow(b,plus?10:4);
         b.setOnClickListener(v->click.run());b.setOnLongClickListener(v->{longClick.run();return true;});
         b.setContentDescription(label.equals("+")?"Zwiększ":"Zmniejsz");
         b.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));return b;
@@ -394,11 +395,14 @@ public class MainActivity extends Activity {
 
     /** Kółko z ikoną w kolorze akcentu. */
     private View badge(int icon,int color,int size){
-        FrameLayout f=new FrameLayout(this);f.setBackground(shape(alpha(color,30),size/2));
+        // Ikona w złotym (lub kolorowym) pierścieniu, jak na grafice „Smart Home”
+        FrameLayout f=new FrameLayout(this);GradientDrawable d=shape(alpha(color,22),size/2);d.setStroke(dp(1.5f),alpha(color,200));f.setBackground(d);glow(f,4);
         Icon i=new Icon(this,icon,color);int pad=dp(size*0.22f);f.setPadding(pad,pad,pad,pad);f.addView(i,new FrameLayout.LayoutParams(-1,-1));
         f.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));return f;
     }
-    private LinearLayout card(){LinearLayout c=column();c.setBackground(shape(CARD));c.setElevation(dp(1.5f));c.setPadding(dp(16),dp(16),dp(16),dp(16));return c;}
+    private LinearLayout card(){LinearLayout c=column();GradientDrawable d=shape(CARD,22);d.setStroke(dp(1),LINE);c.setBackground(d);c.setPadding(dp(16),dp(16),dp(16),dp(16));return c;}
+    /** Złota poświata (cień w kolorze akcentu, Android 9+). */
+    private void glow(View v,int elevation){v.setElevation(dp(elevation));if(Build.VERSION.SDK_INT>=28){v.setOutlineAmbientShadowColor(GOLD);v.setOutlineSpotShadowColor(GOLD);}}
     private void addFull(LinearLayout parent,View v,int bottom){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(bottom);parent.addView(v,lp);}
     private TextView section(String title){TextView t=bold(title,17,TEXT);t.setPadding(dp(4),dp(10),0,dp(10));return t;}
 
@@ -406,7 +410,7 @@ public class MainActivity extends Activity {
         settingsOpen=false;values.clear();details.clear();tabButtons.clear();
         root=column();root.setBackgroundColor(BG);
         LinearLayout top=column();top.setPadding(dp(20),dp(12),dp(20),dp(6));
-        LinearLayout nav=row();nav.setBackgroundColor(CARD);nav.setElevation(dp(10));nav.setPadding(dp(6),dp(8),dp(6),dp(8));
+        LinearLayout nav=row();GradientDrawable navBg=new GradientDrawable();navBg.setColor(NAV);navBg.setStroke(dp(1),LINE);nav.setBackground(new android.graphics.drawable.InsetDrawable(navBg,-dp(2),0,-dp(2),-dp(2)));nav.setPadding(dp(6),dp(8),dp(6),dp(8));
         root.setOnApplyWindowInsetsListener((v,insets)->{top.setPadding(dp(20),dp(12)+insets.getSystemWindowInsetTop(),dp(20),dp(6));nav.setPadding(dp(6),dp(8),dp(6),dp(8)+insets.getSystemWindowInsetBottom());return insets;});
         setContentView(root);root.requestApplyInsets();
         // Nagłówek
@@ -414,14 +418,15 @@ public class MainActivity extends Activity {
         LinearLayout titles=column();
         String day=LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, d MMMM",new Locale("pl","PL")));
         titles.addView(text(day.substring(0,1).toUpperCase(new Locale("pl","PL"))+day.substring(1),13,MUTED));
-        TextView title=text("Mój Dom",28,TEXT);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));titles.addView(title);
+        android.text.SpannableString brand=new android.text.SpannableString("MÓJ DOM");brand.setSpan(new android.text.style.ForegroundColorSpan(GOLD),4,7,0);
+        TextView title=text("",26,TEXT);title.setText(brand);title.setLetterSpacing(0.14f);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));titles.addView(title);
         header.addView(titles,new LinearLayout.LayoutParams(0,-2,1));
-        FrameLayout gear=new FrameLayout(this);gear.setBackground(shape(CARD,22));gear.setElevation(dp(1.5f));int gp=dp(10);gear.setPadding(gp,gp,gp,gp);
-        gear.addView(new Icon(this,Icon.GEAR,TEXT),new FrameLayout.LayoutParams(-1,-1));gear.setOnClickListener(v->settings());gear.setContentDescription("Ustawienia");
+        FrameLayout gear=new FrameLayout(this);GradientDrawable gb=shape(BG,22);gb.setStroke(dp(1.5f),alpha(GOLD,150));gear.setBackground(gb);glow(gear,6);int gp=dp(10);gear.setPadding(gp,gp,gp,gp);
+        gear.addView(new Icon(this,Icon.GEAR,GOLD),new FrameLayout.LayoutParams(-1,-1));gear.setOnClickListener(v->settings());gear.setContentDescription("Ustawienia");
         header.addView(gear,new LinearLayout.LayoutParams(dp(44),dp(44)));
         top.addView(header);
         // Status połączenia
-        LinearLayout chip=row();chip.setBackground(shape(CARD,16));chip.setPadding(dp(12),dp(6),dp(14),dp(6));
+        LinearLayout chip=row();GradientDrawable chb=shape(CARD,16);chb.setStroke(dp(1),LINE);chip.setBackground(chb);chip.setPadding(dp(12),dp(6),dp(14),dp(6));
         statusDot=new View(this);statusDot.setBackground(shape(MUTED,4));chip.addView(statusDot,new LinearLayout.LayoutParams(dp(8),dp(8)));
         connection=text(configured?"Łączenie…":"Ustaw połączenie z Home Assistant",12,MUTED);connection.setPadding(dp(8),0,0,0);chip.addView(connection);
         LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.topMargin=dp(10);top.addView(chip,cp);
@@ -442,7 +447,7 @@ public class MainActivity extends Activity {
         root.addView(nav,new LinearLayout.LayoutParams(-1,-2));
         render();
     }
-    private int accentFor(String t){return t.equals("Gaz")?ORANGE:t.equals("Prąd")?BLUE:t.equals("Serwis")?PURPLE:GREEN;}
+    private int accentFor(String t){return t.equals("Gaz")?ORANGE:t.equals("Prąd")?BLUE:t.equals("Serwis")?PURPLE:GOLD;}
     private int iconFor(int i){
         String n=metrics[i][1].toLowerCase(Locale.ROOT);
         if(n.contains("koszt")||n.contains("cena"))return Icon.COIN;
@@ -460,8 +465,8 @@ public class MainActivity extends Activity {
     private void render(){
         if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();diagram=null;gasToday=null;ring=null;alarmBox=null;heroBurner=null;heroOutside=null;heroBurnerIcon=null;
         for(String name:tabButtons.keySet()){View[] v=tabButtons.get(name);boolean sel=name.equals(tab);
-            v[0].setBackground(sel?shape(GREEN_SOFT,16):null);((Icon)v[1]).set(TAB_ICONS[Arrays.asList(TABS).indexOf(name)],sel?GREEN:MUTED);
-            ((TextView)v[2]).setTextColor(sel?GREEN:MUTED);((TextView)v[2]).setTypeface(Typeface.create(sel?"sans-serif-medium":"sans-serif",Typeface.NORMAL));}
+            v[0].setBackground(sel?shape(GOLD_SOFT,16):null);((Icon)v[1]).set(TAB_ICONS[Arrays.asList(TABS).indexOf(name)],sel?GOLD:MUTED);
+            ((TextView)v[2]).setTextColor(sel?GOLD:MUTED);((TextView)v[2]).setTypeface(Typeface.create(sel?"sans-serif-medium":"sans-serif",Typeface.NORMAL));}
         for(Ctl c:ctls.values()){c.view=null;c.subView=null;}
         if(tab.equals("Dom")){renderRooms();updateCards();return;}
         int accent=accentFor(tab);
@@ -477,7 +482,7 @@ public class MainActivity extends Activity {
             curve.sub=()->{
                 if(ctlInfo(entity(M_CURVE_CTL))==null)return states.isEmpty()?"Oczekiwanie na dane":"Tylko odczyt — przytrzymaj −/+, aby wybrać nastawę krzywej";
                 return entity(M_CURVE_SET).isEmpty()?"Nachylenie krzywej grzewczej":"Zadana zasilania z krzywej: "+shortValue(M_CURVE_SET);};
-            controlCard(Icon.CHART,GREEN,"Krzywa grzewcza",curve,M_CURVE);
+            controlCard(Icon.CHART,GOLD,"Krzywa grzewcza",curve,M_CURVE);
             body.addView(section("Parametry"));
         }else{
             int hero=tab.equals("Gaz")?M_GAS_TODAY:tab.equals("Prąd")?4:19;
@@ -596,12 +601,12 @@ public class MainActivity extends Activity {
         updateRooms();updateDiagram();updateHero();updateAlarms();updateControls();
         for(Integer i:values.keySet()){
             TextView val=values.get(i),sub=details.get(i);val.setTextColor(TEXT);
-            if(entity(i).isEmpty()){val.setText("Wybierz czujnik");val.setTextColor(GREEN);sub.setText("Dotknij, aby połączyć");continue;}
+            if(entity(i).isEmpty()){val.setText("Wybierz czujnik");val.setTextColor(GOLD);sub.setText("Dotknij, aby połączyć");continue;}
             JSONObject s=states.get(entity(i));String state=s==null?"":s.optString("state","");
             if(s==null||state.equals("unknown")||state.equals("unavailable")){val.setText("—");sub.setText(s==null?(states.isEmpty()?"Oczekiwanie na dane":"Brak encji — sprawdź identyfikator"):"Czujnik niedostępny");continue;}
             val.setText(value(i,false));
             // Statusy serwisowe: „on” oznacza problem lub potrzebę serwisu
-            if(entity(i).startsWith("binary_sensor.")&&metrics[i][0].equals("Serwis"))val.setTextColor(state.equals("on")?RED:GREEN);
+            if(entity(i).startsWith("binary_sensor.")&&metrics[i][0].equals("Serwis"))val.setTextColor(state.equals("on")?RED:OK);
             String date=s.optString("last_updated","");
             try{date=OffsetDateTime.parse(date).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM, HH:mm"));}catch(Exception ignored){}
             sub.setText("Aktualizacja "+date);
@@ -643,7 +648,7 @@ public class MainActivity extends Activity {
     private void renderRooms(){
         // Główny wskaźnik: temperatura w domu, zadana i zewnętrzna
         LinearLayout hero=card();hero.setPadding(dp(16),dp(18),dp(16),dp(18));hero.setGravity(Gravity.CENTER_HORIZONTAL);
-        ring=new Ring(this,GREEN,Color.rgb(232,238,241),TEXT,MUTED);hero.addView(ring,new LinearLayout.LayoutParams(-1,-2));
+        ring=new Ring(this,GOLD,Color.rgb(30,42,64),TEXT,MUTED);hero.addView(ring,new LinearLayout.LayoutParams(-1,-2));
         ring.setOnClickListener(v->{if(entity(M_HOUSE).isEmpty())chooseMetric(M_HOUSE);else history(M_HOUSE);});
         // Sterowanie temperaturą zadaną: − / +
         LinearLayout ctl=row();ctl.setGravity(Gravity.CENTER);ctl.setPadding(0,dp(4),0,dp(6));
@@ -653,7 +658,7 @@ public class MainActivity extends Activity {
         ctl.addView(roundButton("+",52,()->adjustCtl(set,1),set.choose));
         hero.addView(ctl);
         LinearLayout chips=row();chips.setGravity(Gravity.CENTER);chips.setPadding(0,dp(6),0,0);
-        LinearLayout c1=row();c1.setBackground(shape(BG,14));c1.setPadding(dp(10),dp(6),dp(12),dp(6));
+        LinearLayout c1=row();c1.setBackground(shape(BG,16));c1.setPadding(dp(10),dp(6),dp(12),dp(6));
         c1.addView(new Icon(this,Icon.THERMO,BLUE),new LinearLayout.LayoutParams(dp(16),dp(16)));
         heroOutside=text("Na zewnątrz —",13,TEXT);heroOutside.setPadding(dp(6),0,0,0);c1.addView(heroOutside);
         c1.setOnClickListener(v->{if(entity(M_OUTSIDE).isEmpty())chooseMetric(M_OUTSIDE);else history(M_OUTSIDE);});
@@ -673,13 +678,13 @@ public class MainActivity extends Activity {
         controlCard(Icon.DROP,BLUE,"Ciepła woda (CWU)",dhw,M_DHW);
         // Pomieszczenia
         LinearLayout sh=row();TextView st=section("Pomieszczenia");sh.addView(st,new LinearLayout.LayoutParams(0,-2,1));
-        TextView edit=bold("Edytuj",14,GREEN);edit.setPadding(dp(12),dp(10),dp(6),dp(10));edit.setOnClickListener(v->chooseRooms());sh.addView(edit);
+        TextView edit=bold("Edytuj",14,GOLD);edit.setPadding(dp(12),dp(10),dp(6),dp(10));edit.setOnClickListener(v->chooseRooms());sh.addView(edit);
         body.addView(sh);
         LinearLayout line=null;int k=0;
         for(String id:selectedRooms()){
             if(k%2==0){line=row();line.setGravity(Gravity.TOP);addFull(body,line,12);}
             LinearLayout c=card();c.setMinimumHeight(dp(124));
-            c.addView(badge(id.startsWith("climate.")?Icon.GAUGE:Icon.HOME,GREEN,34));
+            c.addView(badge(id.startsWith("climate.")?Icon.GAUGE:Icon.HOME,GOLD,34));
             TextView name=text(roomName(id),13,MUTED);name.setPadding(0,dp(10),0,0);name.setMaxLines(2);c.addView(name);
             TextView value=text("—",26,TEXT);value.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));c.addView(value);
             TextView updated=text("Oczekiwanie na dane",11,MUTED);c.addView(updated);
@@ -778,23 +783,23 @@ public class MainActivity extends Activity {
             try{
                 JSONArray array=new JSONArray(HaClient.get(url,t,"/api/states"));Map<String,JSONObject> fresh=new HashMap<>();
                 for(int i=0;i<array.length();i++){JSONObject s=array.getJSONObject(i);fresh.put(s.optString("entity_id"),s);}
-                handler.post(()->{busy=false;if(g!=generation||isDestroyed())return;states.clear();states.putAll(fresh);lastSuccess=java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));connection.setText("Połączono • odczyt "+lastSuccess);connection.setTextColor(TEXT);statusDot.setBackground(shape(GREEN,4));updateCards();});
+                handler.post(()->{busy=false;if(g!=generation||isDestroyed())return;states.clear();states.putAll(fresh);lastSuccess=java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));connection.setText("Połączono • odczyt "+lastSuccess);connection.setTextColor(TEXT);statusDot.setBackground(shape(OK,4));updateCards();});
             }catch(Exception e){final String msg=e.getMessage();handler.post(()->{busy=false;if(g!=generation||isDestroyed())return;connection.setText("Brak nowych danych • "+(lastSuccess.isEmpty()?"":("ostatni odczyt "+lastSuccess+"\n"))+(msg==null?"Sprawdź połączenie":msg));connection.setTextColor(RED);statusDot.setBackground(shape(RED,4));});}
         });
     }
     private EditText field(LinearLayout form,String label,String value,int type){
-        TextView l=text(label,14,Color.DKGRAY);l.setPadding(0,dp(10),0,0);form.addView(l);
-        EditText e=new EditText(this);e.setText(value);e.setTextColor(Color.BLACK);e.setTextSize(14);e.setSingleLine(true);e.setInputType(type);form.addView(e);return e;
+        TextView l=text(label,14,MUTED);l.setPadding(0,dp(10),0,0);form.addView(l);
+        EditText e=new EditText(this);e.setText(value);e.setTextColor(TEXT);e.setTextSize(14);e.setSingleLine(true);e.setInputType(type);form.addView(e);return e;
     }
     private void settings(){
         if(settingsOpen||isDestroyed())return;settingsOpen=true;
         ScrollView scroll=new ScrollView(this);LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(12));scroll.addView(form);
-        form.addView(text("Adres HA dostępny z telefonu. Poza domem użyj HTTPS lub VPN. Token wpisz wyłącznie tutaj.",14,Color.DKGRAY));
+        form.addView(text("Adres HA dostępny z telefonu. Poza domem użyj HTTPS lub VPN. Token wpisz wyłącznie tutaj.",14,MUTED));
         EditText url=field(form,"Adres Home Assistant",base,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
         url.setHint("https://twoj-adres-home-assistant");
         EditText secret=field(form,"Token długoterminowy — puste pole zachowuje zapisany", "",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        CheckBox http=new CheckBox(this);http.setText("Zezwalam na HTTP w zaufanej sieci (token nie jest szyfrowany podczas przesyłania)");http.setTextColor(Color.DKGRAY);http.setChecked(prefs.getBoolean("http",false));form.addView(http);
-        form.addView(text("Czujniki — popraw identyfikatory, jeśli Twoje encje mają inne nazwy.",14,Color.DKGRAY));
+        CheckBox http=new CheckBox(this);http.setText("Zezwalam na HTTP w zaufanej sieci (token nie jest szyfrowany podczas przesyłania)");http.setTextColor(MUTED);http.setChecked(prefs.getBoolean("http",false));form.addView(http);
+        form.addView(text("Czujniki — popraw identyfikatory, jeśli Twoje encje mają inne nazwy.",14,MUTED));
         Map<Integer,EditText> ids=new LinkedHashMap<>();for(int i=0;i<metrics.length;i++)if(i!=M_PUMP_OLD)ids.put(i,field(form,metrics[i][0]+" • "+metrics[i][1],entity(i),InputType.TYPE_CLASS_TEXT));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Połączenie i czujniki").setView(scroll).setPositiveButton("Zapisz",null).setNegativeButton("Anuluj",null).setNeutralButton("Wyloguj",null).create();
         dialog.setOnDismissListener(d->{settingsOpen=false;});dialog.show();
@@ -821,7 +826,7 @@ public class MainActivity extends Activity {
         if(!configured){settings();return;}
         final String url=base,t=token;final int g=generation;
         LinearLayout content=column();content.setPadding(dp(16),dp(12),dp(16),dp(16));
-        TextView info=text("Pobieranie historii 24 h…",14,Color.DKGRAY);content.addView(info);
+        TextView info=text("Pobieranie historii 24 h…",14,MUTED);content.addView(info);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(label+" • 24 h").setView(content).setPositiveButton("Zamknij",null).create();dialog.show();
         worker.execute(()->{try{
             Instant from=Instant.now().minusSeconds(86400);
@@ -849,10 +854,10 @@ public class MainActivity extends Activity {
         @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);float min=Float.MAX_VALUE,max=-Float.MAX_VALUE;
             for(float[] p:points){min=Math.min(min,p[1]);max=Math.max(max,p[1]);}if(max==min){max+=1;min-=1;}
             float left=65,top=25,right=getWidth()-15,bottom=getHeight()-40;if(right<=left)return;
-            paint.setColor(Color.GRAY);paint.setStrokeWidth(1);canvas.drawLine(left,top,left,bottom,paint);canvas.drawLine(left,bottom,right,bottom,paint);
+            paint.setColor(Color.rgb(154,164,181));paint.setStrokeWidth(1);canvas.drawLine(left,top,left,bottom,paint);canvas.drawLine(left,bottom,right,bottom,paint);
             paint.setTextSize(24);canvas.drawText(String.format(Locale.getDefault(),"%.1f",max),0,top+8,paint);canvas.drawText(String.format(Locale.getDefault(),"%.1f",min),0,bottom,paint);
             canvas.drawText("−24 h",left,bottom+30,paint);canvas.drawText("teraz",right-65,bottom+30,paint);
-            paint.setColor(Color.rgb(0,145,112));paint.setStrokeWidth(4);
+            paint.setColor(Color.rgb(245,184,46));paint.setStrokeWidth(4);
             float px=0,py=0;boolean first=true;
             for(float[] p:points){float x=left+Math.max(0,Math.min(86400,p[0]))/86400*(right-left);float y=bottom-(p[1]-min)/(max-min)*(bottom-top);
                 if(!first){canvas.drawLine(px,py,x,py,paint);canvas.drawLine(x,py,x,y,paint);}canvas.drawCircle(x,y,3,paint);first=false;px=x;py=y;}
