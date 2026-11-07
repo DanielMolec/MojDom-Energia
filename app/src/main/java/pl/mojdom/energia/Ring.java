@@ -15,6 +15,7 @@ final class Ring extends View {
         super(c); this.accent = accent; this.track = track; this.textColor = textColor; this.muted = muted;
         arc.setStyle(Paint.Style.STROKE); arc.setStrokeCap(Paint.Cap.ROUND);
         txt.setTextAlign(Paint.Align.CENTER);
+        setLayerType(LAYER_TYPE_SOFTWARE, null); // potrzebne dla złotej poświaty łuku
     }
 
     /** fraction i target w zakresie 0..1 (target < 0 = brak znacznika temperatury zadanej). */
@@ -36,11 +37,12 @@ final class Ring extends View {
         arc.setStrokeWidth(stroke); arc.setShader(null); arc.setColor(track);
         c.drawArc(box, 135, 270, false, arc);
         if (fraction > 0) {
-            arc.setShader(new SweepGradient(cx, cy, new int[]{Color.rgb(96, 196, 180), accent, Color.rgb(96, 196, 180)}, new float[]{0, 0.5f, 1}));
+            arc.setShader(new SweepGradient(cx, cy, new int[]{Color.rgb(180, 120, 20), accent, Color.rgb(255, 214, 120)}, new float[]{0, 0.5f, 0.75f}));
+            arc.setShadowLayer(stroke * 0.6f, 0, 0, Color.argb(150, Color.red(accent), Color.green(accent), Color.blue(accent)));
             c.save(); c.rotate(90, cx, cy);
             c.drawArc(box, 45, 270 * fraction, false, arc);
             c.restore();
-            arc.setShader(null);
+            arc.setShader(null); arc.clearShadowLayer();
         }
         if (target >= 0 && target <= 1) {
             double a = Math.toRadians(135 + 270 * target);
@@ -55,7 +57,7 @@ final class Ring extends View {
         txt.setColor(textColor); txt.setTextSize(size * 0.22f);
         c.drawText(value, cx, cy + size * 0.07f, txt);
         txt.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        txt.setColor(muted); txt.setTextSize(size * 0.068f);
+        txt.setColor(accent); txt.setTextSize(size * 0.068f);
         c.drawText(bottom, cx, cy + size * 0.22f, txt);
     }
 }

@@ -16,13 +16,21 @@ final class HaClient {
         while (result.endsWith("/")) result=result.substring(0,result.length()-1);
         return result;
     }
-    static String get(String base, String token, String path) throws Exception {
+    static String get(String base, String token, String path) throws Exception { return request(base, token, path, null); }
+    /** Wywołanie usługi HA, np. post(base, token, "/api/services/input_number/set_value", "{...}"). */
+    static String post(String base, String token, String path, String json) throws Exception { return request(base, token, path, json); }
+    private static String request(String base, String token, String path, String json) throws Exception {
         HttpURLConnection conn=(HttpURLConnection)new URL(base+path).openConnection();
         conn.setInstanceFollowRedirects(false);
         conn.setConnectTimeout(7000); conn.setReadTimeout(10000);
         conn.setRequestProperty("Authorization","Bearer "+token);
         conn.setRequestProperty("Accept","application/json");
         try {
+            if (json!=null) {
+                conn.setRequestMethod("POST"); conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type","application/json");
+                try (OutputStream os=conn.getOutputStream()) { os.write(json.getBytes(StandardCharsets.UTF_8)); }
+            }
             int code=conn.getResponseCode();
             if (code==401 || code==403) throw new Exception("Brak dostępu — sprawdź token i uprawnienia konta.");
             if (code>=300 && code<400) throw new Exception("Serwer przekierowuje. Wpisz docelowy adres HA.");
