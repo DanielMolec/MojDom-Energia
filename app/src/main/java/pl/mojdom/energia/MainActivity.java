@@ -213,7 +213,7 @@ public class MainActivity extends Activity {
             boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;String temp=slotTempText(key);
             String setText=null;
             if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);setText=slotSet(key).isEmpty()?null:ctlText(c,v);sub=setText==null?"ustaw":"zad. "+setText;}
-            if(diagram!=null)diagram.setRoom(key,slotName(key),temp,sub,subColor,ed);
+            if(diagram!=null)diagram.setRoom(key,slotName(key),temp,ed?(setText==null?"ustaw":setText):null,ed);
             TextView[] tv=slotViews.get(key);
             if(tv!=null){
                 tv[0].setText(slotName(key));tv[1].setText(temp.equals("—")?"—":temp+"C");
@@ -685,7 +685,7 @@ public class MainActivity extends Activity {
         TextView t=bold("Instalacja",17,TEXT);head.addView(t,new LinearLayout.LayoutParams(0,-2,1));
         head.addView(text("Dotknij wartości",12,MUTED));
         frame.addView(head);
-        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_OUTSIDE,M_DHW,M_UFH_FLOW);
+        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_OUTSIDE,M_DHW,M_UFH_FLOW,M_CURVE_SET,M_DHW_SET);
         diagram.setListener(new BoilerDiagram.Listener(){
             public void onTap(int i){if(entity(i).isEmpty())chooseMetric(i);else history(i);}
             public void onLongPress(int i){
@@ -756,6 +756,10 @@ public class MainActivity extends Activity {
         boolean burner=burnerOn();
         diagram.setState(burner,pumpSpeed(burner),fanSpeed(burner),valveOnDhw());
         String uf=entity(M_UFH_FLOW).isEmpty()?"":shortValue(M_UFH_FLOW),ur=entity(M_UFH_RET).isEmpty()?"":shortValue(M_UFH_RET);
+        // pary „teraz / zadana” przy kotle (zadana z krzywej) i zasobniku CWU
+        diagram.setValue(M_CURVE_SET,entity(M_CURVE_SET).isEmpty()?"—":shortValue(M_CURVE_SET));
+        double[] dhwInfo=ctlInfo(entity(M_DHW_SET));
+        diagram.setValue(M_DHW_SET,dhwInfo==null?"—":String.format(new Locale("pl","PL"),dhwInfo[0]==Math.rint(dhwInfo[0])?"%.0f°":"%.1f°",dhwInfo[0]));
         diagram.setValue(M_UFH_FLOW,uf.isEmpty()&&ur.isEmpty()?"podłogówka — wybierz czujnik":"podłoga"+(uf.isEmpty()?"":" ↑"+uf)+(ur.isEmpty()?"":" ↓"+ur));
         updateDiagramRooms();
         diagram.setHealth(healthLevel());
