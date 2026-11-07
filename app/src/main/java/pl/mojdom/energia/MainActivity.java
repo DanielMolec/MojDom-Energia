@@ -434,6 +434,7 @@ public class MainActivity extends Activity {
     private final class Ctl{
         java.util.function.Supplier<String> target,sub,fallback;String unit;Runnable choose;
         Double pending;long until;boolean scheduled;TextView view,subView;
+        double step=0.5,min=Double.NaN,max=Double.NaN; // krok i zakres regulacji (nadpisują atrybuty encji)
         final Runnable sender=()->{scheduled=false;sendCtl(this);};
     }
     private final Map<String,Ctl> ctls=new HashMap<>();
@@ -465,7 +466,7 @@ public class MainActivity extends Activity {
     }
     private String ctlText(Ctl c,double v){
         if(!Double.isFinite(v))return "—";
-        double[] info=ctlInfo(c.target.get());double step=info==null||info[3]<=0?0.5:info[3];
+        double step=c.step>0?c.step:0.5;
         int d=step>=1&&v==Math.rint(v)?0:step>=0.1?1:2;
         return String.format(new Locale("pl","PL"),"%."+d+"f",v)+c.unit;
     }
@@ -483,10 +484,11 @@ public class MainActivity extends Activity {
             new AlertDialog.Builder(this).setTitle("Brak nastawy do zmiany")
                 .setMessage("Wybierz encję, którą można zmieniać w Home Assistant: input_number, number, climate lub water_heater.")
                 .setPositiveButton("Wybierz",(d,w)->c.choose.run()).setNegativeButton("Anuluj",null).show();return;}
-        double step=info[3]>0?info[3]:0.5;
+        double step=c.step>0?c.step:(info[3]>0?info[3]:0.5);
+        double lo=Double.isNaN(c.min)?info[1]:c.min,hi=Double.isNaN(c.max)?info[2]:c.max;
         double base=c.pending!=null?c.pending:info[0];
         double nv=Math.round((base+sign*step)/step)*step;
-        nv=Math.max(info[1],Math.min(info[2],nv));
+        nv=Math.max(lo,Math.min(hi,nv));
         nv=Math.round(nv*1000)/1000.0;
         c.pending=nv;c.until=System.currentTimeMillis()+20000;
         updateControls();updateHero();
@@ -631,7 +633,7 @@ public class MainActivity extends Activity {
         if(tab.equals("Kocioł")){
             renderDiagram();
             list.remove(Integer.valueOf(M_CURVE));
-            Ctl curve=ctl("curve",()->entity(M_CURVE_CTL),"",()->chooseMetric(M_CURVE_CTL));
+            Ctl curve=ctl("curve",()->entity(M_CURVE_CTL),"",()->chooseMetric(M_CURVE_CTL));curve.step=0.1;curve.min=0;curve.max=4;
             curve.fallback=()->entity(M_CURVE).isEmpty()?"—":value(M_CURVE,true);
             curve.sub=()->{
                 if(ctlInfo(entity(M_CURVE_CTL))==null)return states.isEmpty()?"Oczekiwanie na dane":"Tylko odczyt — przytrzymaj −/+, aby wybrać nastawę krzywej";
@@ -675,7 +677,7 @@ public class MainActivity extends Activity {
             bindMetric(c,i);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);
         }
-        if(list.size()%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        if(list.size()%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,-1,1));
     }
     private void renderDiagram(){
         LinearLayout frame=card();frame.setPadding(dp(10),dp(14),dp(10),dp(12));
@@ -855,7 +857,7 @@ public class MainActivity extends Activity {
                 c.setOnClickListener(v->roomTap(key));c.setOnLongClickListener(v->{roomMenu(key);return true;});
                 LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(idx%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);fl.addView(c,lp);
             }
-            if((f.length-1)%2==1&&fl!=null)fl.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+            if((f.length-1)%2==1&&fl!=null)fl.addView(new View(this),new LinearLayout.LayoutParams(0,-1,1));
         }
         // Inne czujniki spoza schematu (przycisk „Edytuj”)
         Set<String> used=new HashSet<>();for(String key:BoilerDiagram.ROOM_KEYS)used.add(slotTemp(key));
@@ -884,7 +886,7 @@ public class MainActivity extends Activity {
                 new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();}).show();return true;});
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);k++;
         }
-        if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,-1,1));
         if(roomViews.isEmpty())body.addView(text("Brak — dodaj czujniki przyciskiem „Edytuj”.",13,MUTED));
         TextView help=text("Złota ramka: dotknij, aby zmienić temperaturę zadaną. Pozostałe: dotknij, aby zobaczyć historię 24 h. Przytrzymaj pomieszczenie, aby zmienić nazwę lub czujnik.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
     }
