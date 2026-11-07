@@ -24,7 +24,7 @@ final class BoilerDiagram extends View {
     /** Pomieszczenia na schemacie: klucz, {środek X, góra Y, szerokość}, czy z temperaturą zadaną (dotknij → −/+). */
     static final String[] ROOM_KEYS = {"p2_kor", "p2_laz", "p2_mik", "p2_adr", "p2_cio", "p1_syp", "p1_laz", "p1_sal", "p1_kor", "klatka"};
     private static final float[][] ROOM_POS = {{55, 128, 46}, {105, 122, 46}, {155, 122, 46}, {205, 122, 46}, {255, 122, 46},
-        {61, 244, 54}, {124, 244, 54}, {186, 244, 54}, {249, 238, 54}, {304, 222, 46}};
+        {61, 244, 54}, {124, 244, 54}, {186, 244, 54}, {249, 238, 54}, {304, 122, 46}};
     static final boolean[] ROOM_EDITABLE = {false, true, true, true, true, false, false, false, true, true};
     private static final float[] P2_X = {55, 105, 155, 205, 255}; // grzejniki piętra 2
     private static final float SUP_X = 276, RET_X = 272, STAIR_X = 280; // pion zasilania/powrotu przy ścianie klatki
@@ -127,13 +127,13 @@ final class BoilerDiagram extends View {
         // CO: zawór → pompa → pion przy klatce → piętro 2 i klatka
         supCo.moveTo(182, 372); supCo.lineTo(SUP_X, 372); supCo.lineTo(SUP_X, 203); supCo.lineTo(40, 203);
         for (float x : P2_X) { supCo.moveTo(x - 9, 203); supCo.lineTo(x - 9, 198); }
-        supCo.moveTo(SUP_X, 300); supCo.lineTo(292, 300);
+        supCo.moveTo(SUP_X, 306); supCo.lineTo(286, 306);
         // CWU: zawór → wężownica zasobnika
         supDhw.moveTo(182, 372); supDhw.lineTo(182, 382); supDhw.lineTo(162, 382);
         // Powrót CO: grzejniki, klatka → pion → do kotła
         for (float x : P2_X) { retCo.moveTo(x + 9, 198); retCo.lineTo(x + 9, 208); }
         retCo.moveTo(40, 208); retCo.lineTo(RET_X, 208); retCo.lineTo(RET_X, 434); retCo.lineTo(174, 434);
-        retCo.moveTo(292, 306); retCo.lineTo(RET_X, 306);
+        retCo.moveTo(286, 318); retCo.lineTo(RET_X, 318);
         // Powrót CWU: z wężownicy do wspólnego powrotu
         retDhw.moveTo(162, 420); retDhw.lineTo(174, 420); retDhw.lineTo(174, 434);
         // Powrót wspólny do kotła
@@ -216,20 +216,17 @@ final class BoilerDiagram extends View {
         stroke.setColor(GOLD); stroke.setStrokeWidth(2.5f);
         tmp.reset(); tmp.moveTo(179, 16); tmp.lineTo(342, 94); tmp.lineTo(16, 94); tmp.close(); c.drawPath(tmp, stroke);
         c.drawRect(30, 94, 328, 330, stroke);
-        stroke.setColor(Color.argb(140, 245, 184, 46)); stroke.setStrokeWidth(2); c.drawLine(30, 212, STAIR_X, 212, stroke);
+        stroke.setColor(Color.argb(140, 245, 184, 46)); stroke.setStrokeWidth(2); c.drawLine(30, 212, 302, 212, stroke); // strop piętra 2 z podestem klatki
         stroke.setColor(Color.argb(90, 245, 184, 46)); stroke.setStrokeWidth(1.5f); c.drawLine(STAIR_X, 94, STAIR_X, 330, stroke);
         // ścianki działowe
         stroke.setColor(Color.rgb(42, 53, 80)); stroke.setPathEffect(new DashPathEffect(new float[]{4, 4}, 0));
         for (float x : new float[]{80, 130, 180, 230}) c.drawLine(x, 114, x, 212, stroke);
         for (float x : new float[]{92.5f, 155, 217.5f}) c.drawLine(x, 232, x, 306, stroke);
         stroke.setPathEffect(null);
-        // schody przez oba piętra
+        // schody klatki: jeden bieg z piętra 1 (od prawej, na dole) na podest piętra 2 (po lewej, u góry)
         stroke.setColor(Color.rgb(86, 98, 122)); stroke.setStrokeWidth(2);
-        tmp.reset(); tmp.moveTo(284, 330);
-        for (int i = 0; i < 7; i++) { tmp.lineTo(284 + i * 6, 318 - i * 12); tmp.lineTo(290 + i * 6, 318 - i * 12); }
-        c.drawPath(tmp, stroke);
-        tmp.reset(); tmp.moveTo(324, 212);
-        for (int i = 0; i < 7; i++) { tmp.lineTo(324 - i * 6, 200 - i * 12); tmp.lineTo(318 - i * 6, 200 - i * 12); }
+        tmp.reset(); tmp.moveTo(326, 330);
+        for (int i = 0; i < 8; i++) { float y = 330 - (i + 1) * 14.75f; tmp.lineTo(326 - i * 5.25f, y); tmp.lineTo(326 - (i + 1) * 5.25f, y); }
         c.drawPath(tmp, stroke);
         // podpisy kondygnacji
         txt.setTextAlign(Paint.Align.LEFT);
@@ -252,7 +249,7 @@ final class BoilerDiagram extends View {
 
     private void drawRadiators(Canvas c) {
         for (int i = 0; i < P2_X.length; i++) drawRadiator(c, P2_X[i] - 14, 180, 28, 18, !rooms.get(ROOM_KEYS[i]).gold);
-        drawRadiator(c, 292, 290, 26, 20, false);
+        drawRadiator(c, 286, 300, 22, 22, !rooms.get("klatka").gold); // grzejnik na klatce (piętro 1, pod biegiem schodów)
     }
 
     private void drawPipes(Canvas c) {

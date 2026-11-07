@@ -73,7 +73,7 @@ public class MainActivity extends Activity {
     private boolean active=false,busy=false,configured=false,settingsOpen=false;
     private int generation=0;
     private TextView connection;private View statusDot;
-    private final Map<String,TextView[]> roomViews=new LinkedHashMap<>();
+    private final Map<String,TextView[]> roomViews=new LinkedHashMap<>(), slotViews=new HashMap<>();
     private final Map<String,View[]> tabButtons=new HashMap<>();
     private LinearLayout root,body;private ScrollView scroll;
     private String lastSuccess="";
@@ -209,11 +209,16 @@ public class MainActivity extends Activity {
     }
     /** Odświeża pomieszczenia na schemacie (temperatura i — dla edytowalnych — temperatura zadana). */
     private void updateDiagramRooms(){
-        if(diagram==null)return;
         for(String key:BoilerDiagram.ROOM_KEYS){
-            boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;
-            if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);sub=slotSet(key).isEmpty()?"ustaw":"zad. "+ctlText(c,v);}
-            diagram.setRoom(key,slotName(key),slotTempText(key),sub,subColor,ed);
+            boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;String temp=slotTempText(key);
+            String setText=null;
+            if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);setText=slotSet(key).isEmpty()?null:ctlText(c,v);sub=setText==null?"ustaw":"zad. "+setText;}
+            if(diagram!=null)diagram.setRoom(key,slotName(key),temp,sub,subColor,ed);
+            TextView[] tv=slotViews.get(key);
+            if(tv!=null){
+                tv[0].setText(slotName(key));tv[1].setText(temp.equals("—")?"—":temp+"C");
+                tv[2].setText(slotTemp(key).isEmpty()?"dotknij, aby wybrać czujnik":ed?(setText==null?"dotknij, aby ustawić":"zadana "+setText):"tylko odczyt");
+            }
         }
     }
     private void roomMenu(String key){
@@ -612,7 +617,7 @@ public class MainActivity extends Activity {
         return Icon.CHART;
     }
     private void render(){
-        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();diagram=null;gasToday=null;ring=null;alarmBox=null;heroBurner=null;heroOutside=null;heroBurnerIcon=null;
+        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();slotViews.clear();diagram=null;gasToday=null;ring=null;alarmBox=null;heroBurner=null;heroOutside=null;heroBurnerIcon=null;
         for(String name:tabButtons.keySet()){View[] v=tabButtons.get(name);boolean sel=name.equals(tab);
             v[0].setBackground(sel?shape(GOLD_SOFT,16):null);((Icon)v[1]).set(TAB_ICONS[Arrays.asList(TABS).indexOf(name)],sel?GOLD:MUTED);
             ((TextView)v[2]).setTextColor(sel?GOLD:MUTED);((TextView)v[2]).setTypeface(Typeface.create(sel?"sans-serif-medium":"sans-serif",Typeface.NORMAL));}
@@ -832,12 +837,34 @@ public class MainActivity extends Activity {
             if(ctlInfo(entity(M_DHW_SET))==null)return (in.isEmpty()?"":in+" • ")+(states.isEmpty()?"Oczekiwanie na dane":"przytrzymaj −/+, aby wybrać nastawę");
             return in.isEmpty()?"Temperatura zadana":in;};
         controlCard(Icon.DROP,BLUE,"Ciepła woda (CWU)",dhw,M_DHW);
-        // Pomieszczenia
-        LinearLayout sh=row();TextView st=section("Pomieszczenia");sh.addView(st,new LinearLayout.LayoutParams(0,-2,1));
+        // Pomieszczenia — te same co na schemacie (przekrój domu), wg kondygnacji
+        body.addView(section("Pomieszczenia"));
+        String[][] floors={{"PIĘTRO 2","p2_kor","p2_laz","p2_mik","p2_adr","p2_cio"},{"PIĘTRO 1","p1_syp","p1_laz","p1_sal","p1_kor"},{"KLATKA SCHODOWA","klatka"}};
+        for(String[] f:floors){
+            TextView fh=text(f[0],11,MUTED);fh.setLetterSpacing(0.15f);fh.setPadding(dp(4),dp(2),0,dp(8));body.addView(fh);
+            LinearLayout fl=null;
+            for(int n=1;n<f.length;n++){
+                String key=f[n];int idx=n-1;boolean ed=slotEditable(key);
+                if(idx%2==0){fl=row();fl.setGravity(Gravity.TOP);addFull(body,fl,10);}
+                LinearLayout c=card();c.setPadding(dp(14),dp(12),dp(14),dp(12));
+                if(ed){GradientDrawable gd=shape(CARD,22);gd.setStroke(dp(1.5f),alpha(GOLD,190));c.setBackground(gd);}
+                TextView name=text(slotName(key),13,MUTED);name.setMaxLines(1);c.addView(name);
+                TextView val=text("—",24,TEXT);val.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));c.addView(val);
+                TextView sub=text("",12,ed?GOLD:MUTED);sub.setMaxLines(1);c.addView(sub);
+                slotViews.put(key,new TextView[]{name,val,sub});
+                c.setOnClickListener(v->roomTap(key));c.setOnLongClickListener(v->{roomMenu(key);return true;});
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(idx%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);fl.addView(c,lp);
+            }
+            if((f.length-1)%2==1&&fl!=null)fl.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        }
+        // Inne czujniki spoza schematu (przycisk „Edytuj”)
+        Set<String> used=new HashSet<>();for(String key:BoilerDiagram.ROOM_KEYS)used.add(slotTemp(key));
+        ArrayList<String> extras=new ArrayList<>();for(String id:selectedRooms())if(!used.contains(id))extras.add(id);
+        LinearLayout sh=row();TextView st=section("Inne czujniki");sh.addView(st,new LinearLayout.LayoutParams(0,-2,1));
         TextView edit=bold("Edytuj",14,GOLD);edit.setPadding(dp(12),dp(10),dp(6),dp(10));edit.setOnClickListener(v->chooseRooms());sh.addView(edit);
         body.addView(sh);
         LinearLayout line=null;int k=0;
-        for(String id:selectedRooms()){
+        for(String id:extras){
             if(k%2==0){line=row();line.setGravity(Gravity.TOP);addFull(body,line,12);}
             LinearLayout c=card();c.setMinimumHeight(dp(124));
             c.addView(badge(id.startsWith("climate.")?Icon.GAUGE:Icon.HOME,GOLD,34));
@@ -858,8 +885,8 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);k++;
         }
         if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
-        if(roomViews.isEmpty())body.addView(text("Dodaj czujniki przyciskiem „Edytuj”.",15,MUTED));
-        TextView help=text("Dotknij kafelka, aby zobaczyć historię 24 h. Przytrzymaj, aby zmienić nazwę albo dodać lub ukryć sterowanie −/+.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
+        if(roomViews.isEmpty())body.addView(text("Brak — dodaj czujniki przyciskiem „Edytuj”.",13,MUTED));
+        TextView help=text("Złota ramka: dotknij, aby zmienić temperaturę zadaną. Pozostałe: dotknij, aby zobaczyć historię 24 h. Przytrzymaj pomieszczenie, aby zmienić nazwę lub czujnik.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
     }
     private void updateHero(){
         if(ring==null)return;
