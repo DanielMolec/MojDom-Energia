@@ -1,0 +1,726 @@
+# automations.yaml — wersja z odciążoną magistralą eBUS
+# Zmiany względem poprzedniej wersji:
+#  - usunięto: ebus_gaz_odczyt_5s, ebus_panel_kotla_odczyt_5s,
+#    1785165599119 (szybki odczyt pompy i zaworu), 1785179370792 (cykliczny odczyt kotła)
+#  - dodano: ebus_odczyt_szybki (co 10 s, 6 odczytów) i ebus_odczyt_wolny (co 2 min)
+#  - usunięto odczyt bai HwcTempMax (kocioł go nie obsługuje: "ERR: invalid position")
+#  - "E7C - ustaw temperaturę z HA": dodano warunek, żeby przy restarcie HA
+#    nie wysyłać do E7C wartości unknown/unavailable
+
+- id: ebus_odczyt_szybki
+  alias: "eBUS — szybki odczyt pracy kotła (co 10 s)"
+  description: "Tylko dane do animacji i zużycia gazu. Bez HwcTempMax (kocioł go nie obsługuje)."
+  mode: single
+  max_exceeded: silent
+  triggers:
+    - trigger: time_pattern
+      seconds: "/10"
+  conditions: []
+  actions:
+    - repeat:
+        for_each:
+          - ebusd/bai/Status01/get
+          - ebusd/bai/Flame/get
+          - ebusd/bai/ModulationDesired/get
+          - ebusd/bai/PositionValveSet/get
+          - ebusd/bai/FanSpeed/get
+          - ebusd/bai/PumpPower/get
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: "{{ repeat.item }}"
+              payload: ""
+              qos: 0
+              retain: false
+          - delay:
+              milliseconds: 400
+
+- id: ebus_odczyt_wolny
+  alias: "eBUS — wolny odczyt parametrów (co 2 min)"
+  description: "Parametry, które zmieniają się powoli."
+  mode: single
+  max_exceeded: silent
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: "/2"
+  conditions: []
+  actions:
+    - repeat:
+        for_each:
+          - ebusd/bai/WaterPressure/get
+          - ebusd/bai/FlowTempDesired/get
+          - ebusd/e7c/HeatCurve/get
+          - ebusd/e7c/PrevHeatCurve/get
+          - ebusd/e7c/RoomTemp/get
+          - ebusd/bai/PumpHours/get
+          - ebusd/bai/HcPumpStarts/get
+          - ebusd/bai/FlowTempMax/get
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: "{{ repeat.item }}"
+              payload: ""
+              qos: 0
+              retain: false
+          - delay:
+              seconds: 1
+
+- id: e846788a629440ac8597d44e917387b9
+  alias: "E7C: ustaw krzywą grzewczą"
+  triggers:
+    - trigger: state
+      entity_id: input_number.e7c_heatcurve
+  conditions:
+    - condition: template
+      value_template: >-
+        {{ trigger.to_state.state not in
+           ['unknown', 'unavailable', 'none', ''] }}
+  actions:
+    - delay: "00:00:01"
+    - action: mqtt.publish
+      data:
+        topic: ebusd/e7c/HeatCurve/set
+        payload: "{{ '%.2f' | format(trigger.to_state.state | float) }}"
+        retain: false
+    - delay: "00:00:02"
+    - action: mqtt.publish
+      data:
+        topic: ebusd/e7c/HeatCurve/get
+        payload: ""
+        retain: false
+  mode: restart
+
+- id: "1785173925222"
+  alias: "E7C - ustaw temperaturę z HA"
+  description: ""
+  triggers:
+    - trigger: state
+      entity_id:
+        - input_number.e7c_temp_set
+  conditions:
+    - condition: template
+      value_template: >-
+        {{ trigger.from_state is not none
+           and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: ebusd/e7c/HeatingTempSet/set
+        payload: "{{ trigger.to_state.state }}"
+  mode: restart
+
+- id: "1785175547520"
+  alias: "E7C - sterowanie CO i CWU"
+  description: "Sterowanie ogrzewaniem i ciepłą wodą przez MQTT eBUSd"
+  triggers:
+    - trigger: state
+      entity_id:
+        - input_boolean.e7c_ogrzewanie_co
+        - input_boolean.e7c_cwu
+        - input_number.e7c_temperatura_cwu
+  conditions:
+    - condition: template
+      value_template: >-
+        {{ trigger.from_state is not none
+           and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: "{{ mqtt_topics[trigger.entity_id] }}"
+        payload: "{{ trigger.to_state.state }}"
+  variables:
+    mqtt_topics:
+      input_boolean.e7c_ogrzewanie_co: ebusd/e7c/HeatingEnable/set
+      input_boolean.e7c_cwu: ebusd/e7c/DHWEnable/set
+      input_number.e7c_temperatura_cwu: ebusd/e7c/DHWTempSet/set
+  mode: restart
+
+- id: "1785180257626"
+  alias: "eBUS - odczyt ciśnienia instalacji"
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: /1
+  conditions: []
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: ebusd/bai/WaterPressure/get
+        payload: ""
+  mode: single
+
+- id: "1785342718477"
+  alias: "E7C - synchronizuj krzywą z eBUS"
+  triggers:
+    - trigger: state
+      entity_id: sensor.krzywa_grzewcza
+  conditions:
+    - condition: template
+      value_template: >-
+        {{ has_value('sensor.krzywa_grzewcza')
+           and
+           ((states('input_number.e7c_heatcurve') | float(0))
+            - (states('sensor.krzywa_grzewcza') | float(0))) | abs > 0.01 }}
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.e7c_heatcurve
+      data:
+        value: "{{ states('sensor.krzywa_grzewcza') | float }}"
+  mode: restart
+
+- id: "1787160718368"
+  alias: "eBUS - alarmy techniczne kotła"
+  description: "Alarmy kotła w Home Assistant i na telefonie"
+  triggers:
+    - trigger: state
+      entity_id:
+        - binary_sensor.ebus_alarm_wysokie_cisnienie
+        - binary_sensor.ebus_alarm_niskie_cisnienie
+        - binary_sensor.ebus_alarm_brak_sygnalu
+        - binary_sensor.ebus_alarm_taktowanie_palnika
+        - binary_sensor.ebus_alarm_pompa_nie_pracuje
+  conditions: []
+  actions:
+    - variables:
+        alarm_id: "{{ trigger.entity_id | replace('.', '_') }}"
+        alarm_name: >-
+          {{ state_attr(trigger.entity_id, 'friendly_name')
+             | default(trigger.entity_id, true) }}
+        alarm_message: >-
+          {% if trigger.entity_id == 'binary_sensor.ebus_alarm_wysokie_cisnienie' %}
+            Zbyt wysokie ciśnienie instalacji:
+            {{ states('sensor.cisnienie_instalacji') }} bar.
+          {% elif trigger.entity_id == 'binary_sensor.ebus_alarm_niskie_cisnienie' %}
+            Zbyt niskie ciśnienie instalacji:
+            {{ states('sensor.cisnienie_instalacji') }} bar.
+          {% elif trigger.entity_id == 'binary_sensor.ebus_alarm_brak_sygnalu' %}
+            Brak komunikacji Home Assistant z magistralą eBUS.
+          {% elif trigger.entity_id == 'binary_sensor.ebus_alarm_taktowanie_palnika' %}
+            Zbyt częste uruchamianie palnika:
+            {{ states('sensor.ebus_starty_palnika_ostatnia_godzina') }}
+            uruchomień w ciągu godziny.
+          {% elif trigger.entity_id == 'binary_sensor.ebus_alarm_pompa_nie_pracuje' %}
+            Palnik pracuje, ale moc pompy wynosi tylko
+            {{ states('sensor.ebusd_bai_pumppower') }}%.
+          {% else %}
+            Wykryto problem techniczny instalacji grzewczej.
+          {% endif %}
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.to_state.state == 'on' }}"
+          sequence:
+            - action: persistent_notification.create
+              data:
+                notification_id: "{{ alarm_id }}"
+                title: "⚠️ Alarm kotła"
+                message: "{{ alarm_message }}"
+            - action: notify.mobile_app_2312dra50g
+              data:
+                title: "⚠️ Alarm kotła"
+                message: "{{ alarm_message }}"
+                data:
+                  tag: "{{ alarm_id }}"
+                  channel: "Alarmy kotła"
+                  importance: high
+                  priority: high
+                  ttl: 0
+                  color: "#F44336"
+                  notification_icon: mdi:alert
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.to_state.state == 'off' }}"
+          sequence:
+            - action: persistent_notification.dismiss
+              continue_on_error: true
+              data:
+                notification_id: "{{ alarm_id }}"
+            - action: notify.mobile_app_2312dra50g
+              data:
+                title: "✅ Alarm kotła zakończony"
+                message: "{{ alarm_name }} — parametry wróciły do normy."
+                data:
+                  tag: "{{ alarm_id }}"
+                  channel: "Alarmy kotła"
+                  importance: default
+                  color: "#4CAF50"
+                  notification_icon: mdi:check-circle
+  mode: parallel
+  max: 10
+
+- id: "1787163885920"
+  alias: "eBUS - odczyt aktualnego błędu kotła"
+  description: "Cykliczny odczyt Currenterror z BAI"
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: /1
+  conditions: []
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: ebusd/bai/Currenterror/get
+        payload: ""
+  mode: single
+
+- id: e7c_automatyczna_regulacja_krzywej
+  alias: "E7C: automatyczna regulacja krzywej grzewczej"
+  description: "Korekta krzywej maksymalnie o 0,1 raz na 48 godzin"
+  mode: single
+  triggers:
+    - trigger: time
+      at: "12:15:00"
+  conditions:
+    - condition: state
+      entity_id: input_boolean.e7c_automatyczna_krzywa
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.e7c_ogrzewanie_co
+      state: "on"
+      for:
+        hours: 6
+    - condition: numeric_state
+      entity_id: sensor.e7c_mediana_temperatura_zewnetrzna_24h
+      below: 10
+    - condition: template
+      value_template: >-
+        {{ state_attr('sensor.e7c_srednia_temperatura_korytarza_24h',
+                      'age_coverage_ratio') | float(0) >= 0.8 }}
+    - condition: template
+      value_template: >-
+        {{ state_attr('sensor.e7c_mediana_temperatura_zewnetrzna_24h',
+                      'age_coverage_ratio') | float(0) >= 0.8 }}
+    - condition: template
+      value_template: >-
+        {% set ostatnia =
+          states('input_datetime.e7c_ostatnia_automatyczna_zmiana') %}
+        {{ ostatnia in ['unknown', 'unavailable', 'none', '']
+           or (as_timestamp(now()) - as_timestamp(ostatnia, 0)) >= 172800 }}
+  actions:
+    - variables:
+        pokoj_srednia: >-
+          {{ states('sensor.e7c_srednia_temperatura_korytarza_24h')
+             | float(none) }}
+        zadana: >-
+          {% if is_state('input_boolean.e7c_harmonogram_komfortu', 'on') %}
+            21.7
+          {% else %}
+            {{ states('input_number.e7c_temp_set') | float(none) }}
+          {% endif %}
+        aktualna: >-
+          {% set odczyt = states('sensor.krzywa_grzewcza') | float(none) %}
+          {{ odczyt if odczyt is not none
+             else (states('input_number.e7c_heatcurve') | float(none)) }}
+        zewnatrz_mediana: >-
+          {{ states('sensor.e7c_mediana_temperatura_zewnetrzna_24h')
+             | float(none) }}
+    - condition: template
+      value_template: >-
+        {{ pokoj_srednia is not none and zadana is not none
+           and aktualna is not none and zewnatrz_mediana is not none }}
+    - variables:
+        roznica: >-
+          {{ ((zadana | float) - (pokoj_srednia | float)) | round(2) }}
+    - condition: template
+      value_template: "{{ (roznica | float | abs) >= 0.7 }}"
+    - variables:
+        nowa_krzywa: >-
+          {% set k = aktualna | float %}
+          {% set blad = roznica | float %}
+          {% if blad >= 0.7 %}
+            {{ ([k + 0.1, 1.5] | min) if k < 1.5 else k }}
+          {% elif blad <= -0.7 %}
+            {{ ([k - 0.1, 0.3] | max) if k > 0.3 else k }}
+          {% else %}
+            {{ k }}
+          {% endif %}
+        powod: >-
+          {% if (roznica | float) >= 0.7 %}
+            Średnia temperatura w domu była za niska.
+          {% else %}
+            Średnia temperatura w domu była za wysoka.
+          {% endif %}
+    - condition: template
+      value_template: >-
+        {{ (nowa_krzywa | float) != (aktualna | float) }}
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.e7c_proponowana_krzywa
+      data:
+        value: "{{ nowa_krzywa | float | round(1) }}"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.e7c_heatcurve
+      data:
+        value: "{{ nowa_krzywa | float | round(1) }}"
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.e7c_ostatnia_automatyczna_zmiana
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - action: persistent_notification.create
+      data:
+        notification_id: e7c_automatyczna_zmiana_krzywej
+        title: "Automatycznie zmieniono krzywą"
+        message: >-
+          Krzywa: {{ aktualna }} → {{ nowa_krzywa | float | round(1) }}
+
+          Średnia temperatura zadana: {{ zadana }}°C
+
+          Średnia temperatura w domu: {{ pokoj_srednia }}°C
+
+          Mediana temperatury zewnętrznej z 24 h:
+          {{ zewnatrz_mediana }}°C
+
+          {{ powod }}
+
+- id: e7c_harmonogram_komfortu_22_21
+  alias: "E7C: harmonogram komfortu 22/21°C"
+  description: "22°C od 06:00 do 22:30 oraz 21°C w nocy"
+  mode: restart
+  triggers:
+    - trigger: time
+      at: "06:00:00"
+    - trigger: time
+      at: "22:30:00"
+    - trigger: state
+      entity_id: input_boolean.e7c_harmonogram_komfortu
+      to: "on"
+    - trigger: homeassistant
+      event: start
+  conditions:
+    - condition: state
+      entity_id: input_boolean.e7c_harmonogram_komfortu
+      state: "on"
+  actions:
+    - variables:
+        temperatura_docelowa: >-
+          {% set teraz = now() %}
+          {% set poczatek = today_at('06:00') %}
+          {% set koniec = today_at('22:30') %}
+          {{ 22.0 if poczatek <= teraz < koniec else 21.0 }}
+    - condition: template
+      value_template: >-
+        {{ (states('input_number.e7c_temp_set') | float(0)
+            - temperatura_docelowa | float) | abs > 0.01 }}
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.e7c_temp_set
+      data:
+        value: "{{ temperatura_docelowa | float }}"
+
+- id: e7c_ochrona_minimalnego_komfortu
+  alias: "E7C: ochrona minimalnego komfortu"
+  description: "Podnosi temperaturę zadaną do 22°C, gdy w domu jest zbyt chłodno"
+  mode: single
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.heating_ebusd_e7c_temperatura_na_korytarzu
+      below: 20.5
+      for:
+        minutes: 20
+  conditions:
+    - condition: state
+      entity_id: input_boolean.e7c_harmonogram_komfortu
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.e7c_ogrzewanie_co
+      state: "on"
+    - condition: template
+      value_template: >-
+        {{ states('input_number.e7c_temp_set') | float(0) < 22.0 }}
+  actions:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.e7c_temp_set
+      data:
+        value: 22.0
+    - action: persistent_notification.create
+      data:
+        notification_id: e7c_ochrona_minimalnego_komfortu
+        title: "E7C: uruchomiono ochronę komfortu"
+        message: >-
+          Temperatura pokojowa zmierzona przez E7C utrzymywała się poniżej 20,5°C
+          przez 20 minut. Temperaturę zadaną podniesiono do 22°C.
+
+# Zachowana ręczna automatyzacja z wcześniejszego pliku.
+- id: "1789153616997"
+  alias: "Utomatyzacja krzywej grzewczej"
+  description: ""
+  triggers: []
+  conditions: []
+  actions:
+    - action: button.press
+      metadata: {}
+      target:
+        label_id: ogrzewanie
+      data: {}
+  mode: single
+
+- id: e7c_licznik_dni_zimnych
+  alias: "E7C: aktualizuj licznik dni chłodnych (sezon grzewczy)"
+  description: >-
+    Raz dziennie zlicza kolejne pełne doby, w których mediana
+    temperatury zewnętrznej pozostawała poniżej 10°C.
+  mode: single
+  triggers:
+    - trigger: time
+      at: "23:55:00"
+  conditions:
+    - condition: template
+      value_template: >-
+        {{
+          is_number(states(
+            'sensor.e7c_mediana_temperatura_zewnetrzna_24h'
+          ))
+          and
+          state_attr(
+            'sensor.e7c_mediana_temperatura_zewnetrzna_24h',
+            'age_coverage_ratio'
+          ) | float(0) >= 0.8
+        }}
+  actions:
+    - choose:
+        - conditions:
+            - condition: numeric_state
+              entity_id: sensor.e7c_mediana_temperatura_zewnetrzna_24h
+              below: 10
+          sequence:
+            - action: counter.increment
+              target:
+                entity_id: counter.e7c_dni_pod_rzad_zimno
+      default:
+        - action: counter.reset
+          target:
+            entity_id: counter.e7c_dni_pod_rzad_zimno
+
+- id: e7c_odczyt_danych_serwisowych
+  alias: "E7C: odczyt danych serwisowych"
+  description: "Aktualizacja terminu, alarmu i telefonu serwisowego z E7C"
+  mode: single
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: "/5"
+  conditions: []
+  actions:
+    - delay:
+        seconds: 5
+    - action: mqtt.publish
+      data:
+        topic: ebusd/e7c/MaintenanceAlarm/get
+        payload: ""
+    - delay:
+        seconds: 1
+    - action: mqtt.publish
+      data:
+        topic: ebusd/e7c/MaintenanceAlarmDate/get
+        payload: ""
+    - delay:
+        seconds: 1
+    - action: mqtt.publish
+      data:
+        topic: ebusd/e7c/MaintenanceTel/get
+        payload: ""
+
+- id: ebus_monitor_polaczenia_diagnostycznego
+  alias: "eBUS: monitor połączenia diagnostycznego"
+  description: "Ostrzeżenie po 5 minutach braku sygnału lub ważnych danych"
+  mode: restart
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.ebus_polaczenie_diagnostyczne
+      to: "off"
+      id: brak
+    - trigger: state
+      entity_id: binary_sensor.ebus_polaczenie_diagnostyczne
+      to: "on"
+      id: powrot
+  conditions: []
+  actions:
+    - choose:
+        - conditions:
+            - condition: trigger
+              id: brak
+          sequence:
+            - action: persistent_notification.create
+              data:
+                notification_id: ebus_polaczenie_diagnostyczne
+                title: "eBUS — brak pełnych danych"
+                message: >-
+                  Przez co najmniej 5 minut brakuje sygnału eBUS albo
+                  jednego z wymaganych odczytów.
+
+                  Status: {{ states('sensor.ebus_status_diagnostyki') }}
+
+                  Brakujące dane:
+                  {{ state_attr('sensor.ebus_status_diagnostyki',
+                                'brakujace_encje') | default('nieustalone', true) }}
+
+                  Ostatni poprawny odczyt:
+                  {{ states('sensor.ebus_ostatni_poprawny_odczyt') }}
+        - conditions:
+            - condition: trigger
+              id: powrot
+          sequence:
+            - action: persistent_notification.dismiss
+              continue_on_error: true
+              data:
+                notification_id: ebus_polaczenie_diagnostyczne
+
+- id: ebus_monitor_jakosci_sieci
+  alias: "eBUS: monitor jakości sieci"
+  description: >-
+    Rozróżnia problem adaptera Wi-Fi i hosta ebusd; reaguje dopiero po
+    dwóch minutach utrzymującego się pogorszenia.
+  mode: queued
+  max: 4
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.ebus_alarm_sieci_adaptera
+      to: "on"
+      id: adapter_problem
+    - trigger: state
+      entity_id: binary_sensor.ebus_alarm_sieci_adaptera
+      to: "off"
+      id: adapter_ok
+    - trigger: state
+      entity_id: binary_sensor.ebus_alarm_sieci_hosta
+      to: "on"
+      id: host_problem
+    - trigger: state
+      entity_id: binary_sensor.ebus_alarm_sieci_hosta
+      to: "off"
+      id: host_ok
+  conditions: []
+  actions:
+    - choose:
+        - conditions:
+            - condition: trigger
+              id: adapter_problem
+          sequence:
+            - action: persistent_notification.create
+              data:
+                notification_id: ebus_siec_adapter
+                title: "eBUS — problem sieci adaptera"
+                message: >-
+                  Diagnoza: {{ states('sensor.ebus_diagnoza_sieci') }}
+
+                  Jakość: {{ states('sensor.ebus_jakosc_sieci_adaptera') }}
+
+                  Ping średni:
+                  {{ states('sensor.192_168_88_42_round_trip_time_average') }} ms
+
+                  Ping maksymalny:
+                  {{ states('sensor.192_168_88_42_round_trip_time_maximum') }} ms
+
+                  Jitter: {{ states('sensor.192_168_88_42_jitter') }} ms
+
+                  Utrata pakietów:
+                  {{ states('sensor.192_168_88_42_packet_loss') }}%
+
+        - conditions:
+            - condition: trigger
+              id: host_problem
+          sequence:
+            - action: persistent_notification.create
+              data:
+                notification_id: ebus_siec_host
+                title: "eBUS — problem sieci hosta"
+                message: >-
+                  Diagnoza: {{ states('sensor.ebus_diagnoza_sieci') }}
+
+                  Jakość: {{ states('sensor.ebus_jakosc_sieci_hosta') }}
+
+                  Ping średni:
+                  {{ states('sensor.192_168_88_84_round_trip_time_average') }} ms
+
+                  Ping maksymalny:
+                  {{ states('sensor.192_168_88_84_round_trip_time_maximum') }} ms
+
+                  Jitter: {{ states('sensor.192_168_88_84_jitter') }} ms
+
+                  Utrata pakietów:
+                  {{ states('sensor.192_168_88_84_packet_loss') }}%
+
+        - conditions:
+            - condition: trigger
+              id: adapter_ok
+          sequence:
+            - action: persistent_notification.dismiss
+              continue_on_error: true
+              data:
+                notification_id: ebus_siec_adapter
+
+        - conditions:
+            - condition: trigger
+              id: host_ok
+          sequence:
+            - action: persistent_notification.dismiss
+              continue_on_error: true
+              data:
+                notification_id: ebus_siec_host
+
+- id: e7c_przypomnienie_serwis_30_dni
+  alias: "E7C: przypomnienie 30 dni przed serwisem"
+  description: "Powiadomienie w HA od 30 dni przed terminem i po terminie."
+  mode: restart
+
+  triggers:
+    - trigger: time
+      at: "09:00:00"
+
+    - trigger: homeassistant
+      event: start
+
+    - trigger: state
+      entity_id: sensor.e7c_termin_serwisu
+
+  actions:
+    - variables:
+        termin_tekst: "{{ states('sensor.e7c_termin_serwisu') }}"
+
+    # Nie obliczaj terminu z niedostępnych danych.
+    - condition: template
+      value_template: >-
+        {{ strptime(termin_tekst, '%d.%m.%Y %H:%M', none) is not none }}
+
+    # Różnica dat kalendarzowych — bez przesunięć przez zmianę czasu.
+    - variables:
+        dni: >-
+          {% set termin = strptime(termin_tekst, '%d.%m.%Y %H:%M') %}
+          {{ (termin.date() - now().date()).days }}
+
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ dni | int <= 30 }}"
+          sequence:
+            - action: persistent_notification.create
+              data:
+                notification_id: e7c_serwis_30_dni
+                title: "Przypomnienie o serwisie kotła"
+                message: >-
+                  {% set d = dni | int %}
+                  {% if d < 0 %}
+                    Termin serwisu minął {{ -d }} dni temu.
+                  {% elif d == 0 %}
+                    Termin serwisu przypada dzisiaj.
+                  {% else %}
+                    Do terminu serwisu pozostało {{ d }} dni.
+                  {% endif %}
+
+                  Termin zapisany w E7C: {{ termin_tekst }}.
+
+                  Umów przegląd w autoryzowanym serwisie.
+
+      default:
+        - action: persistent_notification.dismiss
+          data:
+            notification_id: e7c_serwis_30_dni
