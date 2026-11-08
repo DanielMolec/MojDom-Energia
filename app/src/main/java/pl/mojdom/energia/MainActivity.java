@@ -15,10 +15,10 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 
 public class MainActivity extends Activity {
-    // Paleta inspirowana aplikacjami producentów kotłów: jasne tło, białe karty, morski akcent
-    private static final int BG=Color.rgb(242,245,247), CARD=Color.WHITE, TEXT=Color.rgb(28,43,51), MUTED=Color.rgb(110,124,135),
-        GREEN=Color.rgb(0,145,126), GREEN_SOFT=Color.rgb(217,240,236), LINE=Color.rgb(226,232,236),
-        ORANGE=Color.rgb(232,119,46), BLUE=Color.rgb(47,111,222), PURPLE=Color.rgb(124,77,190), RED=Color.rgb(214,64,69);
+    // Styl „Złota noc”: granatowo-czarne tło, ciemne karty ze złotą obwódką, złoty akcent z poświatą
+    private static final int BG=Color.rgb(11,18,32), CARD=Color.rgb(18,26,43), NAV=Color.rgb(14,22,38), TEXT=Color.rgb(243,244,246), MUTED=Color.rgb(154,164,181),
+        GOLD=Color.rgb(245,184,46), GOLD_SOFT=Color.argb(38,245,184,46), LINE=Color.argb(46,245,184,46), OK=Color.rgb(74,222,128),
+        ORANGE=Color.rgb(251,146,60), BLUE=Color.rgb(125,211,252), PURPLE=Color.rgb(192,132,252), RED=Color.rgb(248,113,113);
     // Default IDs follow the user's supplied HA configuration; all can be edited.
     // UWAGA: kolejność musi zostać zachowana (ustawienia zapisane są jako entity_<indeks>).
     private final String[][] metrics={
@@ -50,14 +50,19 @@ public class MainActivity extends Activity {
         {"Ukryte", "Pompa — wysterowanie (scalone z „Pompa”)", ""},
         {"Kocioł", "Zawór 3-drogowy", ""},
         {"Kocioł", "Temperatura CWU (zasobnik)", ""},
-        {"Krzywa", "Temperatura zadana z krzywej", ""}
+        {"Krzywa", "Temperatura zadana z krzywej", ""},
+        {"Serwis", "Kod błędu kotła", ""},
+        {"Sterowanie", "Krzywa grzewcza — nastawa", ""},
+        {"Sterowanie", "Temperatura zadana CWU", ""},
+        {"Schemat", "Podłogówka — zasilanie", ""},
+        {"Schemat", "Podłogówka — powrót", ""}
     };
-    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28;
+    private static final int M_GAS_TODAY=1,M_POWER=22,M_BURNER=8,M_FLOW=10,M_RETURN=11,M_HOUSE=14,M_SET=15,M_OUTSIDE=16,M_FAN=24,M_PUMP=23,M_PUMP_OLD=25,M_VALVE=26,M_DHW=27,M_CURVE_SET=28,M_ERROR=29,M_PRESSURE=12,M_SERVICE=20,M_TECH=21,M_CURVE=13,M_CURVE_CTL=30,M_DHW_SET=31,M_UFH_FLOW=32,M_UFH_RET=33;
     // Metryki pokazane na schemacie — nie powtarzamy ich w kafelkach
     private static final Set<Integer> ON_DIAGRAM=new HashSet<>(Arrays.asList(M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW));
     private static final String[] TABS={"Dom","Gaz","Prąd","Kocioł","Serwis"};
     private static final int[] TAB_ICONS={Icon.HOME,Icon.FLAME,Icon.BOLT,Icon.BOILER,Icon.WRENCH};
-    private BoilerDiagram diagram;private TextView gasToday;private Ring ring;private TextView heroBurner,heroOutside;private Icon heroBurnerIcon;
+    private BoilerDiagram diagram;private LinearLayout alarmBox;private TextView gasToday;private Ring ring;private TextView heroBurner,heroOutside;private Icon heroBurnerIcon;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Map<Integer,TextView> values=new HashMap<>(), details=new HashMap<>();
@@ -68,7 +73,7 @@ public class MainActivity extends Activity {
     private boolean active=false,busy=false,configured=false,settingsOpen=false;
     private int generation=0;
     private TextView connection;private View statusDot;
-    private final Map<String,TextView[]> roomViews=new LinkedHashMap<>();
+    private final Map<String,TextView[]> roomViews=new LinkedHashMap<>(), slotViews=new HashMap<>();
     private final Map<String,View[]> tabButtons=new HashMap<>();
     private LinearLayout root,body;private ScrollView scroll;
     private String lastSuccess="";
@@ -76,8 +81,8 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
-        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(CARD);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(NAV);
+        getWindow().getDecorView().setSystemUiVisibility(0);
         prefs=getSharedPreferences("settings",0);secrets=new TokenStore(this);
         migrate();
         base=prefs.getString("base","");
@@ -111,6 +116,10 @@ public class MainActivity extends Activity {
     private String entity(int i){
         String id=prefs.getString("entity_"+i,metrics[i][2]).trim();
         if(i==M_CURVE_SET&&id.isEmpty())return detectCurveSetpoint();
+        if(i==M_ERROR&&id.isEmpty())return detectErrorEntity();
+        if(i==M_CURVE_CTL&&id.isEmpty())return detectCurveControl();
+        if(i==M_DHW_SET&&id.isEmpty())return detectDhwSetpoint();
+        if((i==M_UFH_FLOW||i==M_UFH_RET)&&id.isEmpty())return detectUfh(i==M_UFH_FLOW);
         return id;
     }
     /** Gdy użytkownik nie wybrał czujnika: szuka w HA encji z temperaturą zadaną wyliczoną z krzywej grzewczej. */
@@ -127,13 +136,431 @@ public class MainActivity extends Activity {
         }
         return best;
     }
+    /** Gdy nie wybrano czujnika: szuka temperatury zasilania / powrotu podłogówki. */
+    private String detectUfh(boolean flow){
+        String best="";int score=0;
+        for(String id:states.keySet()){
+            if(!id.startsWith("sensor."))continue;
+            String n=norm(id+" "+friendly(id));int sc=0;
+            if(n.contains("podlog")||n.contains("ufh")||n.contains("underfloor")||n.contains("floor_heat"))sc=1;
+            if(sc>0&&(flow?(n.contains("zasil")||n.contains("flow")||n.contains("supply")):(n.contains("powrot")||n.contains("return"))))sc=3;
+            if(sc>score){score=sc;best=id;}
+        }
+        return score>=3?best:"";
+    }
+    private String friendly(String id){JSONObject s=states.get(id);JSONObject a=s==null?null:s.optJSONObject("attributes");return a==null?"":a.optString("friendly_name","");}
+    /** Małe litery bez polskich znaków, inne znaki → „_”. */
+    private static String norm(String t){
+        t=t.toLowerCase(Locale.ROOT);StringBuilder b=new StringBuilder();
+        for(char ch:t.toCharArray()){int k="ąćęłńóśźż".indexOf(ch);if(k>=0)ch="acelnoszz".charAt(k);b.append(Character.isLetterOrDigit(ch)?ch:'_');}
+        return b.toString();
+    }
+
+    // ===== Pomieszczenia na schemacie (przekrój domu) =====
+    private static final Map<String,String[]> SLOTS=new LinkedHashMap<>();
+    static{
+        // klucz → {nazwa domyślna, kondygnacja, słowa do automatycznego dopasowania czujnika}
+        SLOTS.put("p2_kor",new String[]{"Korytarz","PIĘTRO 2","korytarz"});
+        SLOTS.put("p2_laz",new String[]{"Łazienka","PIĘTRO 2","lazienk"});
+        SLOTS.put("p2_mik",new String[]{"Mikołaj","PIĘTRO 2 • POKÓJ","mikolaj"});
+        SLOTS.put("p2_adr",new String[]{"Adrian","PIĘTRO 2 • POKÓJ","adrian"});
+        SLOTS.put("p2_cio",new String[]{"Ciotka","PIĘTRO 2 • POKÓJ","ciotk"});
+        SLOTS.put("p1_syp",new String[]{"Sypialnia","PIĘTRO 1","sypialn"});
+        SLOTS.put("p1_laz",new String[]{"Łazienka","PIĘTRO 1","lazienk"});
+        SLOTS.put("p1_sal",new String[]{"Salon","PIĘTRO 1","salon"});
+        SLOTS.put("p1_kor",new String[]{"Korytarz","PIĘTRO 1","korytarz"});
+        SLOTS.put("klatka",new String[]{"Klatka","KLATKA SCHODOWA • OBA PIĘTRA","klatk|schod"});
+    }
+    private boolean slotEditable(String key){int i=Arrays.asList(BoilerDiagram.ROOM_KEYS).indexOf(key);return i>=0&&BoilerDiagram.ROOM_EDITABLE[i];}
+    private String slotName(String key){String n=prefs.getString("slot_name_"+key,"").trim();return n.isEmpty()?SLOTS.get(key)[0]:n;}
+    /** Czujnik temperatury pomieszczenia: wybrany ręcznie albo dopasowany po nazwie (tylko gdy jednoznaczny). */
+    private String slotTemp(String key){
+        String id=prefs.getString("slot_temp_"+key,"").trim();if(!id.isEmpty())return id;
+        String[] words=SLOTS.get(key)[2].split("\\|");boolean twoFloors=key.endsWith("_laz")||key.endsWith("_kor");
+        String[] floorHints=key.startsWith("p2")?new String[]{"pietro_2","pietro2","2_pietro","gora","poddasze"}:new String[]{"pietro_1","pietro1","1_pietro","parter","dol"};
+        String found="";int count=0;
+        for(String sid:states.keySet()){
+            if(!(sid.startsWith("sensor.")||sid.startsWith("climate.")))continue;
+            JSONObject st=states.get(sid);JSONObject a=st.optJSONObject("attributes");if(a==null)continue;
+            boolean temp=sid.startsWith("climate.")?a.has("current_temperature"):("temperature".equals(a.optString("device_class"))||a.optString("unit_of_measurement").equals("°C"));
+            if(!temp)continue;
+            String n=norm(sid+" "+a.optString("friendly_name",""));boolean hit=false;
+            for(String w:words)if(n.contains(w))hit=true;
+            if(!hit||n.contains("zadan")||n.contains("target")||n.contains("setpoint"))continue;
+            if(twoFloors){boolean fl=false;for(String h:floorHints)if(n.contains(h))fl=true;if(!fl)continue;}
+            found=sid;count++;
+        }
+        if(count==1)return found;
+        if(key.equals("p1_kor"))return entity(M_HOUSE); // czujnik regulatora na korytarzu
+        return "";
+    }
+    private String slotSet(String key){
+        String id=prefs.getString("slot_set_"+key,"").trim();if(!id.isEmpty())return id;
+        String t=slotTemp(key);if(t.startsWith("climate."))return t;
+        return key.equals("p1_kor")?entity(M_SET):""; // korytarz piętra 1: temperatura zadana regulatora
+    }
+    private Ctl slotCtl(String key){Ctl c=ctls.get("slot:"+key);if(c==null)c=ctl("slot:"+key,()->slotSet(key),"°",()->chooseSlotSet(key));return c;}
+    private void chooseSlotTemp(String key){pickEntity(slotName(key)+" — czujnik temperatury",id->id.startsWith("sensor.")||id.startsWith("climate."),e->{prefs.edit().putString("slot_temp_"+key,e).apply();render();});}
+    private void chooseSlotSet(String key){pickEntity(slotName(key)+" — temperatura zadana",MainActivity::settable,e->{prefs.edit().putString("slot_set_"+key,e).apply();render();});}
+    private String slotTempText(String key){
+        String id=slotTemp(key);if(id.isEmpty())return "—";
+        try{double v=Double.parseDouble(getTemperature(id));if(Double.isFinite(v))return String.format(new Locale("pl","PL"),"%.1f°",v);}catch(Exception ignored){}
+        return "—";
+    }
+    /** Odświeża pomieszczenia na schemacie (temperatura i — dla edytowalnych — temperatura zadana). */
+    private void updateDiagramRooms(){
+        for(String key:BoilerDiagram.ROOM_KEYS){
+            boolean ed=slotEditable(key);String sub=null;int subColor=GOLD;String temp=slotTempText(key);
+            String setText=null;
+            if(ed){Ctl c=slotCtl(key);double v=ctlValue(c);setText=slotSet(key).isEmpty()?null:ctlText(c,v);sub=setText==null?"ustaw":"zad. "+setText;}
+            if(diagram!=null)diagram.setRoom(key,slotName(key),temp,ed?(setText==null?"ustaw":setText):null,ed);
+            TextView[] tv=slotViews.get(key);
+            if(tv!=null){
+                tv[0].setText(slotName(key));tv[1].setText(temp.equals("—")?"—":temp+"C");
+                tv[2].setText(slotTemp(key).isEmpty()?"dotknij, aby wybrać czujnik":ed?(setText==null?"dotknij, aby ustawić":"zadana "+setText):"tylko odczyt");
+            }
+        }
+    }
+    private void roomMenu(String key){
+        ArrayList<String> items=new ArrayList<>(Arrays.asList("Zmień nazwę","Wybierz czujnik temperatury"));
+        if(slotEditable(key))items.add("Wybierz encję temperatury zadanej");
+        new AlertDialog.Builder(this).setTitle(slotName(key)).setItems(items.toArray(new CharSequence[0]),(d,w)->{
+            if(w==1){chooseSlotTemp(key);return;}if(w==2){chooseSlotSet(key);return;}
+            EditText label=new EditText(this);label.setText(slotName(key));label.setSingleLine(true);
+            new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(dd,ww)->{prefs.edit().putString("slot_name_"+key,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();
+        }).show();
+    }
+    private void roomTap(String key){
+        // Pomieszczenie z temperaturą zadaną zawsze otwiera okienko −/+ (czujnik można dobrać w okienku)
+        if(slotEditable(key)){roomSheet(key);return;}
+        if(slotTemp(key).isEmpty()){chooseSlotTemp(key);return;}
+        history(slotTemp(key),slotName(key));
+    }
+    /** Okienko od dołu ekranu: temperatura teraz, temperatura zadana z −/+, historia. */
+    private void roomSheet(String key){
+        Ctl c=slotCtl(key);
+        Dialog d=new Dialog(this);
+        LinearLayout v=column();v.setPadding(dp(22),dp(12),dp(22),dp(26));
+        GradientDrawable bg=new GradientDrawable();bg.setColor(CARD);float r=dp(26);bg.setCornerRadii(new float[]{r,r,r,r,0,0,0,0});bg.setStroke(dp(1),alpha(GOLD,100));v.setBackground(bg);
+        View handle=new View(this);handle.setBackground(shape(Color.rgb(59,69,88),2));LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(40),dp(4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.bottomMargin=dp(14);v.addView(handle,hp);
+        TextView fl=text(SLOTS.get(key)[1],12,MUTED);fl.setLetterSpacing(0.12f);v.addView(fl);
+        TextView name=bold(slotName(key),22,TEXT);v.addView(name);
+        String now=slotTempText(key);
+        TextView nowT=text(now.equals("—")?"Teraz —":"Teraz "+now+"C",13,MUTED);nowT.setPadding(0,dp(4),0,0);v.addView(nowT);
+        if(slotTemp(key).isEmpty()){
+            TextView pickT=bold("Wybierz czujnik temperatury ›",13,GOLD);pickT.setPadding(0,dp(6),0,dp(2));
+            pickT.setOnClickListener(x->{d.dismiss();chooseSlotTemp(key);});v.addView(pickT);
+        }
+        if(slotSet(key).isEmpty()){
+            TextView info=text("Nie wybrano encji temperatury zadanej. Wybierz encję typu input_number, number lub climate z Home Assistant.",14,MUTED);info.setPadding(0,dp(16),0,dp(8));v.addView(info);
+            TextView pick=bold("Wybierz encję",15,BG);pick.setGravity(Gravity.CENTER);pick.setBackground(shape(GOLD,14));pick.setPadding(0,dp(14),0,dp(14));
+            pick.setOnClickListener(x->{d.dismiss();chooseSlotSet(key);});v.addView(pick,new LinearLayout.LayoutParams(-1,-2));
+        }else{
+            LinearLayout ctlRow=row();ctlRow.setGravity(Gravity.CENTER);ctlRow.setPadding(0,dp(22),0,dp(8));
+            ctlRow.addView(roundButton("−",64,()->adjustCtl(c,-1),c.choose));
+            LinearLayout mid=column();mid.setGravity(Gravity.CENTER_HORIZONTAL);mid.setPadding(dp(24),0,dp(24),0);
+            mid.addView(text("Zadana",12,MUTED));
+            TextView val=text("—",40,GOLD);val.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));mid.addView(val);c.view=val;
+            ctlRow.addView(mid);
+            ctlRow.addView(roundButton("+",64,()->adjustCtl(c,1),c.choose));
+            v.addView(ctlRow);
+        }
+        LinearLayout btns=row();btns.setPadding(0,dp(16),0,0);
+        TextView hist=text("Historia 24 h",14,MUTED);hist.setGravity(Gravity.CENTER);GradientDrawable hb=shape(CARD,14);hb.setStroke(dp(1),Color.rgb(42,53,80));hist.setBackground(hb);hist.setPadding(0,dp(13),0,dp(13));
+        hist.setOnClickListener(x->{d.dismiss();if(slotTemp(key).isEmpty())chooseSlotTemp(key);else history(slotTemp(key),slotName(key));});
+        TextView ok=bold("Gotowe",14,BG);ok.setGravity(Gravity.CENTER);ok.setBackground(shape(GOLD,14));ok.setPadding(0,dp(13),0,dp(13));ok.setOnClickListener(x->d.dismiss());
+        LinearLayout.LayoutParams b1=new LinearLayout.LayoutParams(0,-2,1);b1.rightMargin=dp(6);btns.addView(hist,b1);
+        LinearLayout.LayoutParams b2=new LinearLayout.LayoutParams(0,-2,1);b2.leftMargin=dp(6);btns.addView(ok,b2);
+        v.addView(btns);
+        d.setContentView(v);
+        Window w=d.getWindow();
+        if(w!=null){w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));w.setLayout(-1,-2);w.setGravity(Gravity.BOTTOM);w.setDimAmount(0.6f);}
+        d.setOnDismissListener(x->c.view=null);
+        d.show();updateControls();
+    }
+    /** Zawór 3-drogowy w pozycji CWU (≥ 50 % albo stan typu „cwu”, „dhw”, „on”). */
+    private boolean valveOnDhw(){
+        JSONObject s=entity(M_VALVE).isEmpty()?null:states.get(entity(M_VALVE));if(s==null)return false;
+        String st=norm(s.optString("state",""));
+        if(st.equals("on")||st.contains("cwu")||st.contains("dhw")||st.contains("hwc")||st.contains("water")||st.contains("woda"))return true;
+        try{return Double.parseDouble(s.optString("state"))>=50;}catch(Exception e){return false;}
+    }
+
+    private static boolean settable(String id){return id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("climate.")||id.startsWith("water_heater.");}
+    /** Gdy nie wybrano encji: szuka w HA nastawy krzywej grzewczej, którą można zmieniać (number / input_number). */
+    private String detectCurveControl(){
+        String sensor=prefs.getString("entity_"+M_CURVE,metrics[M_CURVE][2]).trim();
+        if(sensor.startsWith("number.")||sensor.startsWith("input_number."))return sensor;
+        String best="";int score=0;
+        for(String id:states.keySet()){
+            if(!id.startsWith("number.")&&!id.startsWith("input_number."))continue;
+            String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(n.contains("propon")||n.contains("prev"))continue; // np. input_number.e7c_proponowana_krzywa — nie jest wysyłana do regulatora
+            if(n.contains("krzyw")||n.contains("curve"))sc=2;
+            if(sc>0&&(n.contains("zadan")||n.contains("desired")||n.contains("temp")))sc=1;
+            if(sc>0&&(n.contains("hc1")||n.contains("obieg")))sc++;
+            if(n.contains("heatcurve")||n.contains("heat_curve"))sc=5; // np. input_number.e7c_heatcurve → ebusd e7c HeatCurve
+            if(sc>score){score=sc;best=id;}
+        }
+        return best;
+    }
+    /** Gdy nie wybrano encji: szuka nastawy temperatury ciepłej wody (water_heater lub np. ebusd …hwctempdesired). */
+    private String detectDhwSetpoint(){
+        String best="",skip=prefs.getString("entity_"+M_SET,metrics[M_SET][2]).trim();int score=0;
+        for(String id:states.keySet()){
+            if(!settable(id)||id.startsWith("climate.")||id.equals(skip))continue;
+            String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(id.startsWith("water_heater."))sc=5;
+            else if(n.contains("hwctempdesired")||n.contains("hwc_temp_desired")||n.contains("dhw_target")||n.contains("dhw_setpoint"))sc=4;
+            else if((n.contains("cwu")||n.contains("dhw")||n.contains("hwc")||n.contains("ciepla_woda"))&&(n.contains("zadan")||n.contains("desired")||n.contains("target")||n.contains("set")||n.contains("temp")))sc=3; // np. input_number.e7c_temperatura_cwu
+            if(sc>score){score=sc;best=id;}
+        }
+        return best;
+    }
+    /** Gdy nie wybrano czujnika: szuka encji z aktualnym kodem błędu kotła (np. ebusd …currenterror). */
+    private String detectErrorEntity(){
+        String best="";int score=0;
+        for(String id:states.keySet()){
+            if(!id.startsWith("sensor."))continue;
+            String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(n.contains("error")||n.contains("blad")||n.contains("bledu")||n.contains("fault")||n.contains("usterk"))sc=1;
+            if(sc>0&&(n.contains("history")||n.contains("histori")))sc=0;
+            if(n.contains("currenterror")||n.contains("current_error")||n.contains("aktualny_blad")||n.contains("kod_bledu"))sc=3;
+            if(sc>0&&n.contains("bai"))sc++;
+            if(sc>score){score=sc;best=id;}
+        }
+        return best;
+    }
+
+    // ===== Alarmy kotła =====
+    /** Najczęstsze kody błędów kotłów Vaillant (F.xx). */
+    private static String faultText(int code){
+        switch(code){
+            case 0: return "Przerwa w czujniku temperatury zasilania (NTC)";
+            case 1: return "Przerwa w czujniku temperatury powrotu (NTC)";
+            case 10: return "Zwarcie czujnika temperatury zasilania";
+            case 11: return "Zwarcie czujnika temperatury powrotu";
+            case 13: return "Zwarcie czujnika zasobnika CWU";
+            case 20: return "Zadziałał ogranicznik temperatury bezpieczeństwa (przegrzanie)";
+            case 22: return "Brak wody w instalacji / za niskie ciśnienie";
+            case 23: return "Brak wody — zbyt duża różnica zasilanie/powrót";
+            case 24: return "Brak wody — zbyt szybki wzrost temperatury";
+            case 25: return "Przegrzanie spalin";
+            case 27: return "Fałszywy sygnał płomienia";
+            case 28: return "Brak zapłonu przy uruchomieniu — sprawdź dopływ gazu";
+            case 29: return "Zanik płomienia podczas pracy";
+            case 32: return "Usterka wentylatora (obroty)";
+            case 33: return "Usterka presostatu / odprowadzenia spalin";
+            case 49: return "Za niskie napięcie magistrali eBUS";
+            case 61: return "Usterka sterowania zaworem gazowym";
+            case 62: return "Opóźnione zamknięcie zaworu gazowego";
+            case 63: return "Błąd pamięci EEPROM";
+            case 64: return "Usterka elektroniki lub czujnika";
+            case 65: return "Przegrzanie elektroniki";
+            case 67: return "Nieprawidłowy sygnał płomienia";
+            case 70: return "Nieprawidłowy kod urządzenia (DSN)";
+            case 71: return "Czujnik zasilania pokazuje stałą wartość";
+            case 72: return "Rozbieżność czujników zasilania i powrotu";
+            case 73: return "Usterka czujnika ciśnienia wody (zwarcie)";
+            case 74: return "Usterka czujnika ciśnienia wody (przerwa)";
+            case 75: return "Brak wzrostu ciśnienia po starcie pompy — sprawdź pompę i ciśnienie";
+            case 77: return "Usterka pompy kondensatu lub klapy spalin";
+            case 83: return "Brak wzrostu temperatury — możliwy brak wody";
+            case 84: return "Nieprawdopodobne wartości zasilanie/powrót";
+            case 85: return "Czujniki zasilania i powrotu na tej samej rurze";
+            default: return "Kod błędu kotła — sprawdź instrukcję urządzenia";
+        }
+    }
+    /** Zwraca listę {poziom, tytuł, opis}; poziom 1 = ostrzeżenie, 2 = alarm. */
+    private ArrayList<Object[]> alarms(){
+        ArrayList<Object[]> out=new ArrayList<>();
+        if(states.isEmpty())return out;
+        JSONObject err=entity(M_ERROR).isEmpty()?null:states.get(entity(M_ERROR));
+        if(err!=null){
+            String st=err.optString("state","").trim();
+            java.util.regex.Matcher m=java.util.regex.Pattern.compile("(\\d+)").matcher(st);
+            boolean none=st.isEmpty()||st.equals("unknown")||st.equals("unavailable")||st.equals("-")||st.toLowerCase(Locale.ROOT).matches(".*(no error|none|brak|ok|kein).*");
+            if(!none&&m.find()&&Integer.parseInt(m.group(1))!=0){int code=Integer.parseInt(m.group(1));
+                out.add(new Object[]{2,String.format(Locale.ROOT,"Błąd F.%02d",code),faultText(code)});}
+        }
+        if(isOn(M_TECH))out.add(new Object[]{2,"Problem ze stanem technicznym kotła","Zgłoszony przez Home Assistant ("+metrics[M_TECH][1]+")"});
+        if(isOn(M_SERVICE))out.add(new Object[]{1,"Wymagany serwis","Umów przegląd kotła"});
+        JSONObject pr=entity(M_PRESSURE).isEmpty()?null:states.get(entity(M_PRESSURE));
+        if(pr!=null){try{double v=Double.parseDouble(pr.optString("state",""));
+            if(v<0.8)out.add(new Object[]{2,String.format(new Locale("pl","PL"),"Bardzo niskie ciśnienie: %.1f bar",v),"Uzupełnij wodę w instalacji (zwykle 1,2–2,0 bar)"});
+            else if(v<1.0)out.add(new Object[]{1,String.format(new Locale("pl","PL"),"Niskie ciśnienie: %.1f bar",v),"Wkrótce uzupełnij wodę w instalacji"});
+            else if(v>2.8)out.add(new Object[]{1,String.format(new Locale("pl","PL"),"Wysokie ciśnienie: %.1f bar",v),"Sprawdź naczynie wzbiorcze i zawór bezpieczeństwa"});
+        }catch(Exception ignored){}}
+        JSONObject flow=entity(M_FLOW).isEmpty()?null:states.get(entity(M_FLOW));
+        if(flow!=null&&flow.optString("state").equals("unavailable"))out.add(new Object[]{1,"Brak danych z kotła","Czujniki eBUS są niedostępne — sprawdź adapter eBUS"});
+        return out;
+    }
+    private boolean isOn(int i){JSONObject s=entity(i).isEmpty()?null:states.get(entity(i));return s!=null&&s.optString("state").equals("on");}
+    private int healthLevel(){
+        if(states.isEmpty())return BoilerDiagram.HEALTH_UNKNOWN;
+        int lvl=BoilerDiagram.HEALTH_OK;for(Object[] a:alarms())lvl=Math.max(lvl,(Integer)a[0]);return lvl;
+    }
+    private void renderAlarms(){
+        alarmBox=card();alarmBox.setPadding(dp(18),dp(18),dp(18),dp(14));
+        addFull(body,alarmBox,12);
+        bindMetric(alarmBox,M_ERROR);
+    }
+    private void updateAlarms(){
+        if(alarmBox==null)return;
+        alarmBox.removeAllViews();
+        ArrayList<Object[]> list=alarms();int lvl=healthLevel();
+        int col=lvl==BoilerDiagram.HEALTH_ALARM?RED:lvl==BoilerDiagram.HEALTH_WARN?ORANGE:lvl==BoilerDiagram.HEALTH_OK?OK:MUTED;
+        LinearLayout head=row();
+        head.addView(badge(lvl==BoilerDiagram.HEALTH_OK?Icon.CHECK:lvl==BoilerDiagram.HEALTH_UNKNOWN?Icon.CLOCK:Icon.ALERT,col,44));
+        LinearLayout t=column();t.setPadding(dp(14),0,0,0);
+        t.addView(bold(lvl==BoilerDiagram.HEALTH_ALARM?"Alarm kotła":lvl==BoilerDiagram.HEALTH_WARN?"Wymaga uwagi":lvl==BoilerDiagram.HEALTH_OK?"Kocioł działa poprawnie":"Oczekiwanie na dane",17,lvl==BoilerDiagram.HEALTH_OK?TEXT:col));
+        t.addView(text(lvl==BoilerDiagram.HEALTH_OK?"Brak aktywnych alarmów":lvl==BoilerDiagram.HEALTH_UNKNOWN?"Łączenie z Home Assistant…":(list.size()==1?"1 aktywne zgłoszenie":list.size()+" aktywne zgłoszenia"),13,MUTED));
+        head.addView(t,new LinearLayout.LayoutParams(0,-2,1));
+        alarmBox.addView(head);
+        for(Object[] a:list){
+            int c=((Integer)a[0])==2?RED:ORANGE;
+            LinearLayout r=row();r.setGravity(Gravity.TOP);r.setBackground(shape(alpha(c,22),14));r.setPadding(dp(12),dp(10),dp(12),dp(10));
+            r.addView(new Icon(this,Icon.ALERT,c),new LinearLayout.LayoutParams(dp(20),dp(20)));
+            LinearLayout tx=column();tx.setPadding(dp(10),0,0,0);
+            tx.addView(bold((String)a[1],14,TEXT));tx.addView(text((String)a[2],12,MUTED));
+            r.addView(tx,new LinearLayout.LayoutParams(0,-2,1));
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(10);alarmBox.addView(r,lp);
+        }
+        if(entity(M_ERROR).isEmpty()&&!states.isEmpty()){
+            TextView hint=text("Nie znaleziono czujnika kodu błędu kotła — przytrzymaj tę kartę, aby go wybrać.",12,MUTED);hint.setPadding(0,dp(10),0,0);alarmBox.addView(hint);
+        }
+    }
+
+    // ===== Sterowanie nastawami −/+ (temperatura zadana, krzywa, CWU, grzejniki) =====
+    /** Jedna nastawa sterowana przyciskami −/+. Zmiana jest wysyłana do HA chwilę po ostatnim kliknięciu. */
+    private final class Ctl{
+        java.util.function.Supplier<String> target,sub,fallback;String unit;Runnable choose;
+        Double pending;long until;boolean scheduled;TextView view,subView;
+        double step=0.5,min=Double.NaN,max=Double.NaN; // krok i zakres regulacji (nadpisują atrybuty encji)
+        final Runnable sender=()->{scheduled=false;sendCtl(this);};
+    }
+    private final Map<String,Ctl> ctls=new HashMap<>();
+    private Ctl ctl(String key,java.util.function.Supplier<String> target,String unit,Runnable choose){
+        Ctl c=ctls.get(key);if(c==null){c=new Ctl();ctls.put(key,c);}
+        c.target=target;c.unit=unit;c.choose=choose;c.view=null;c.subView=null;c.sub=null;c.fallback=null;return c;
+    }
+    /** {wartość, min, max, krok} albo null, gdy encji nie da się sterować. */
+    private double[] ctlInfo(String id){
+        JSONObject s=id==null||id.isEmpty()?null:states.get(id);if(s==null)return null;
+        JSONObject a=s.optJSONObject("attributes");if(a==null)a=new JSONObject();
+        boolean dhw=id.startsWith("water_heater.");
+        try{
+            if(id.startsWith("input_number.")||id.startsWith("number."))
+                return new double[]{Double.parseDouble(s.optString("state")),a.optDouble("min",0),a.optDouble("max",100),a.optDouble("step",0.5)};
+            if(id.startsWith("climate.")||dhw)
+                return new double[]{a.getDouble("temperature"),a.optDouble("min_temp",dhw?35:5),a.optDouble("max_temp",dhw?65:30),a.optDouble("target_temp_step",dhw?1:0.5)};
+        }catch(Exception ignored){}
+        return null;
+    }
+    /** Aktualna nastawa; świeżo kliknięta wartość ma pierwszeństwo, dopóki HA jej nie potwierdzi (maks. 20 s). */
+    private double ctlValue(Ctl c){
+        double[] info=ctlInfo(c.target.get());double v=info==null?Double.NaN:info[0];
+        if(c.pending!=null){
+            if(System.currentTimeMillis()>c.until||(Double.isFinite(v)&&Math.abs(v-c.pending)<1e-6&&!c.scheduled))c.pending=null;
+            else v=c.pending;
+        }
+        return v;
+    }
+    private String ctlText(Ctl c,double v){
+        if(!Double.isFinite(v))return "—";
+        double step=c.step>0?c.step:0.5;
+        int d=step>=1&&v==Math.rint(v)?0:step>=0.1?1:2;
+        return String.format(new Locale("pl","PL"),"%."+d+"f",v)+c.unit;
+    }
+    private void updateControls(){
+        updateDiagramRooms();
+        for(Ctl c:ctls.values()){
+            if(c.view!=null){double v=ctlValue(c);String t=ctlText(c,v);if(!Double.isFinite(v)&&c.fallback!=null)t=c.fallback.get();c.view.setText(t);}
+            if(c.subView!=null&&c.sub!=null)c.subView.setText(c.sub.get());
+        }
+    }
+    private void adjustCtl(Ctl c,int sign){
+        double[] info=ctlInfo(c.target.get());
+        if(info==null){
+            if(states.isEmpty()){Toast.makeText(this,"Poczekaj na połączenie z Home Assistant",Toast.LENGTH_LONG).show();return;}
+            new AlertDialog.Builder(this).setTitle("Brak nastawy do zmiany")
+                .setMessage("Wybierz encję, którą można zmieniać w Home Assistant: input_number, number, climate lub water_heater.")
+                .setPositiveButton("Wybierz",(d,w)->c.choose.run()).setNegativeButton("Anuluj",null).show();return;}
+        double step=c.step>0?c.step:(info[3]>0?info[3]:0.5);
+        double lo=Double.isNaN(c.min)?info[1]:c.min,hi=Double.isNaN(c.max)?info[2]:c.max;
+        double base=c.pending!=null?c.pending:info[0];
+        double nv=Math.round((base+sign*step)/step)*step;
+        nv=Math.max(lo,Math.min(hi,nv));
+        nv=Math.round(nv*1000)/1000.0;
+        c.pending=nv;c.until=System.currentTimeMillis()+20000;
+        updateControls();updateHero();
+        handler.removeCallbacks(c.sender);c.scheduled=true;handler.postDelayed(c.sender,900); // wysyłamy po chwili, gdy użytkownik skończy klikać
+    }
+    private void sendCtl(Ctl c){
+        if(c.pending==null||!configured)return;
+        final double v=c.pending;final String id=c.target.get(),url=base,t=token;final int g=generation;
+        if(id==null||id.indexOf('.')<0){c.pending=null;return;}
+        final String domain=id.substring(0,id.indexOf('.'));
+        final boolean temp=domain.equals("climate")||domain.equals("water_heater");
+        final String path="/api/services/"+domain+(temp?"/set_temperature":"/set_value");
+        worker.execute(()->{try{
+            JSONObject body=new JSONObject();body.put("entity_id",id);body.put(temp?"temperature":"value",v);
+            HaClient.post(url,t,path,body.toString());
+            handler.post(()->{if(g!=generation||isDestroyed())return;
+                JSONObject s=states.get(id);
+                try{if(s!=null){if(temp){JSONObject a=s.optJSONObject("attributes");if(a!=null)a.put("temperature",v);}else s.put("state",String.valueOf(v));}}catch(Exception ignored){}
+                Toast.makeText(this,"Ustawiono "+ctlText(c,v),Toast.LENGTH_SHORT).show();updateControls();updateHero();});
+        }catch(Exception e){final String msg=e.getMessage();handler.post(()->{if(g!=generation||isDestroyed())return;c.pending=null;
+            new AlertDialog.Builder(this).setTitle("Nie udało się zmienić nastawy").setMessage(msg==null?"Sprawdź połączenie":msg).setPositiveButton("OK",null).show();updateControls();updateHero();});}});
+    }
+    private View roundButton(String label,int size,Runnable click,Runnable longClick){
+        boolean plus=label.equals("+")&&size>=46;
+        TextView b=text(label,Math.round(size/2f),plus?BG:GOLD);b.setGravity(Gravity.CENTER);b.setIncludeFontPadding(false);
+        GradientDrawable d=shape(plus?GOLD:BG,size/2);d.setStroke(dp(1.5f),alpha(GOLD,plus?255:160));b.setBackground(d);glow(b,plus?10:4);
+        b.setOnClickListener(v->click.run());b.setOnLongClickListener(v->{longClick.run();return true;});
+        b.setContentDescription(label.equals("+")?"Zwiększ":"Zmniejsz");
+        b.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));return b;
+    }
+    /** Wiersz [−] wartość [+]. */
+    private LinearLayout ctlRow(Ctl c,int size,int textSize,int gap){
+        LinearLayout r=row();r.setGravity(Gravity.CENTER);
+        r.addView(roundButton("−",size,()->adjustCtl(c,-1),c.choose));
+        TextView v=bold("—",textSize,TEXT);v.setGravity(Gravity.CENTER);v.setSingleLine(true);v.setPadding(dp(gap),0,dp(gap),0);
+        r.addView(v,new LinearLayout.LayoutParams(gap==0?0:-2,-2,gap==0?1:0));c.view=v;
+        r.addView(roundButton("+",size,()->adjustCtl(c,1),c.choose));
+        return r;
+    }
+    /** Karta z nastawą: ikona, tytuł, opis i sterowanie −/+. */
+    private void controlCard(int icon,int accent,String title,Ctl c,int historyMetric){
+        LinearLayout card=card();card.setPadding(dp(16),dp(16),dp(16),dp(14));
+        LinearLayout head=row();head.addView(badge(icon,accent,40));
+        LinearLayout t=column();t.setPadding(dp(12),0,0,0);t.addView(bold(title,15,TEXT));
+        TextView sub=text("",12,MUTED);t.addView(sub);c.subView=sub;
+        head.addView(t,new LinearLayout.LayoutParams(0,-2,1));card.addView(head);
+        LinearLayout r=ctlRow(c,46,24,22);r.setPadding(0,dp(12),0,0);card.addView(r);
+        card.setOnClickListener(v->{String id=c.target.get();if(ctlInfo(id)!=null)history(id,title);else if(!entity(historyMetric).isEmpty())history(historyMetric);else c.choose.run();});
+        card.setOnLongClickListener(v->{c.choose.run();return true;});
+        addFull(body,card,12);
+    }
+    private String roomTarget(String id){
+        String t=prefs.getString("room_set_"+id,"").trim();
+        if(t.equals("-"))return ""; // sterowanie ukryte przez użytkownika
+        return !t.isEmpty()?t:id.startsWith("climate.")?id:"";
+    }
+    private void chooseRoomTarget(String id){
+        pickEntity(roomName(id)+" — temperatura zadana",MainActivity::settable,e->{prefs.edit().putString("room_set_"+id,e).apply();render();});
+    }
+
     /** Kółko z ikoną w kolorze akcentu. */
     private View badge(int icon,int color,int size){
-        FrameLayout f=new FrameLayout(this);f.setBackground(shape(alpha(color,30),size/2));
+        // Ikona w złotym (lub kolorowym) pierścieniu, jak na grafice „Smart Home”
+        FrameLayout f=new FrameLayout(this);GradientDrawable d=shape(alpha(color,22),size/2);d.setStroke(dp(1.5f),alpha(color,200));f.setBackground(d);glow(f,4);
         Icon i=new Icon(this,icon,color);int pad=dp(size*0.22f);f.setPadding(pad,pad,pad,pad);f.addView(i,new FrameLayout.LayoutParams(-1,-1));
         f.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));return f;
     }
-    private LinearLayout card(){LinearLayout c=column();c.setBackground(shape(CARD));c.setElevation(dp(1.5f));c.setPadding(dp(16),dp(16),dp(16),dp(16));return c;}
+    private LinearLayout card(){LinearLayout c=column();GradientDrawable d=shape(CARD,22);d.setStroke(dp(1),LINE);c.setBackground(d);c.setPadding(dp(16),dp(16),dp(16),dp(16));return c;}
+    /** Złota poświata (cień w kolorze akcentu, Android 9+). */
+    private void glow(View v,int elevation){v.setElevation(dp(elevation));if(Build.VERSION.SDK_INT>=28){v.setOutlineAmbientShadowColor(GOLD);v.setOutlineSpotShadowColor(GOLD);}}
     private void addFull(LinearLayout parent,View v,int bottom){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(bottom);parent.addView(v,lp);}
     private TextView section(String title){TextView t=bold(title,17,TEXT);t.setPadding(dp(4),dp(10),0,dp(10));return t;}
 
@@ -141,7 +568,7 @@ public class MainActivity extends Activity {
         settingsOpen=false;values.clear();details.clear();tabButtons.clear();
         root=column();root.setBackgroundColor(BG);
         LinearLayout top=column();top.setPadding(dp(20),dp(12),dp(20),dp(6));
-        LinearLayout nav=row();nav.setBackgroundColor(CARD);nav.setElevation(dp(10));nav.setPadding(dp(6),dp(8),dp(6),dp(8));
+        LinearLayout nav=row();GradientDrawable navBg=new GradientDrawable();navBg.setColor(NAV);navBg.setStroke(dp(1),LINE);nav.setBackground(new android.graphics.drawable.InsetDrawable(navBg,-dp(2),0,-dp(2),-dp(2)));nav.setPadding(dp(6),dp(8),dp(6),dp(8));
         root.setOnApplyWindowInsetsListener((v,insets)->{top.setPadding(dp(20),dp(12)+insets.getSystemWindowInsetTop(),dp(20),dp(6));nav.setPadding(dp(6),dp(8),dp(6),dp(8)+insets.getSystemWindowInsetBottom());return insets;});
         setContentView(root);root.requestApplyInsets();
         // Nagłówek
@@ -149,14 +576,15 @@ public class MainActivity extends Activity {
         LinearLayout titles=column();
         String day=LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, d MMMM",new Locale("pl","PL")));
         titles.addView(text(day.substring(0,1).toUpperCase(new Locale("pl","PL"))+day.substring(1),13,MUTED));
-        TextView title=text("Mój Dom",28,TEXT);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));titles.addView(title);
+        android.text.SpannableString brand=new android.text.SpannableString("MÓJ DOM");brand.setSpan(new android.text.style.ForegroundColorSpan(GOLD),4,7,0);
+        TextView title=text("",26,TEXT);title.setText(brand);title.setLetterSpacing(0.14f);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));titles.addView(title);
         header.addView(titles,new LinearLayout.LayoutParams(0,-2,1));
-        FrameLayout gear=new FrameLayout(this);gear.setBackground(shape(CARD,22));gear.setElevation(dp(1.5f));int gp=dp(10);gear.setPadding(gp,gp,gp,gp);
-        gear.addView(new Icon(this,Icon.GEAR,TEXT),new FrameLayout.LayoutParams(-1,-1));gear.setOnClickListener(v->settings());gear.setContentDescription("Ustawienia");
+        FrameLayout gear=new FrameLayout(this);GradientDrawable gb=shape(BG,22);gb.setStroke(dp(1.5f),alpha(GOLD,150));gear.setBackground(gb);glow(gear,6);int gp=dp(10);gear.setPadding(gp,gp,gp,gp);
+        gear.addView(new Icon(this,Icon.GEAR,GOLD),new FrameLayout.LayoutParams(-1,-1));gear.setOnClickListener(v->settings());gear.setContentDescription("Ustawienia");
         header.addView(gear,new LinearLayout.LayoutParams(dp(44),dp(44)));
         top.addView(header);
         // Status połączenia
-        LinearLayout chip=row();chip.setBackground(shape(CARD,16));chip.setPadding(dp(12),dp(6),dp(14),dp(6));
+        LinearLayout chip=row();GradientDrawable chb=shape(CARD,16);chb.setStroke(dp(1),LINE);chip.setBackground(chb);chip.setPadding(dp(12),dp(6),dp(14),dp(6));
         statusDot=new View(this);statusDot.setBackground(shape(MUTED,4));chip.addView(statusDot,new LinearLayout.LayoutParams(dp(8),dp(8)));
         connection=text(configured?"Łączenie…":"Ustaw połączenie z Home Assistant",12,MUTED);connection.setPadding(dp(8),0,0,0);chip.addView(connection);
         LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.topMargin=dp(10);top.addView(chip,cp);
@@ -177,7 +605,7 @@ public class MainActivity extends Activity {
         root.addView(nav,new LinearLayout.LayoutParams(-1,-2));
         render();
     }
-    private int accentFor(String t){return t.equals("Gaz")?ORANGE:t.equals("Prąd")?BLUE:t.equals("Serwis")?PURPLE:GREEN;}
+    private int accentFor(String t){return t.equals("Gaz")?ORANGE:t.equals("Prąd")?BLUE:t.equals("Serwis")?PURPLE:GOLD;}
     private int iconFor(int i){
         String n=metrics[i][1].toLowerCase(Locale.ROOT);
         if(n.contains("koszt")||n.contains("cena"))return Icon.COIN;
@@ -186,17 +614,18 @@ public class MainActivity extends Activity {
         if(n.contains("starty"))return Icon.FLAME;
         if(n.contains("termin"))return Icon.CALENDAR;
         if(n.contains("dni"))return Icon.CLOCK;
-        if(n.contains("problem"))return Icon.ALERT;
+        if(n.contains("problem")||n.contains("błęd"))return Icon.ALERT;
         if(n.contains("serwis"))return Icon.WRENCH;
         if(metrics[i][0].equals("Gaz"))return Icon.FLAME;
         if(metrics[i][0].equals("Prąd"))return n.contains("zużycie")?Icon.CHART:Icon.BOLT;
         return Icon.CHART;
     }
     private void render(){
-        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();diagram=null;gasToday=null;ring=null;heroBurner=null;heroOutside=null;heroBurnerIcon=null;
+        if(body==null)return;body.removeAllViews();values.clear();details.clear();roomViews.clear();slotViews.clear();diagram=null;gasToday=null;ring=null;alarmBox=null;heroBurner=null;heroOutside=null;heroBurnerIcon=null;
         for(String name:tabButtons.keySet()){View[] v=tabButtons.get(name);boolean sel=name.equals(tab);
-            v[0].setBackground(sel?shape(GREEN_SOFT,16):null);((Icon)v[1]).set(TAB_ICONS[Arrays.asList(TABS).indexOf(name)],sel?GREEN:MUTED);
-            ((TextView)v[2]).setTextColor(sel?GREEN:MUTED);((TextView)v[2]).setTypeface(Typeface.create(sel?"sans-serif-medium":"sans-serif",Typeface.NORMAL));}
+            v[0].setBackground(sel?shape(GOLD_SOFT,16):null);((Icon)v[1]).set(TAB_ICONS[Arrays.asList(TABS).indexOf(name)],sel?GOLD:MUTED);
+            ((TextView)v[2]).setTextColor(sel?GOLD:MUTED);((TextView)v[2]).setTypeface(Typeface.create(sel?"sans-serif-medium":"sans-serif",Typeface.NORMAL));}
+        for(Ctl c:ctls.values()){c.view=null;c.subView=null;}
         if(tab.equals("Dom")){renderRooms();updateCards();return;}
         int accent=accentFor(tab);
         ArrayList<Integer> list=new ArrayList<>();
@@ -205,15 +634,23 @@ public class MainActivity extends Activity {
         if(tab.equals("Kocioł")&&list.contains(M_SET))list.set(list.indexOf(M_SET),M_CURVE_SET);
         if(tab.equals("Kocioł")){
             renderDiagram();
+            list.remove(Integer.valueOf(M_CURVE));
+            Ctl curve=ctl("curve",()->entity(M_CURVE_CTL),"",()->chooseMetric(M_CURVE_CTL));curve.step=0.1;curve.min=0;curve.max=4;
+            curve.fallback=()->entity(M_CURVE).isEmpty()?"—":value(M_CURVE,true);
+            curve.sub=()->{
+                if(ctlInfo(entity(M_CURVE_CTL))==null)return states.isEmpty()?"Oczekiwanie na dane":"Tylko odczyt — przytrzymaj −/+, aby wybrać nastawę krzywej";
+                return entity(M_CURVE_SET).isEmpty()?"Nachylenie krzywej grzewczej":"Zadana zasilania z krzywej: "+shortValue(M_CURVE_SET);};
+            controlCard(Icon.CHART,GOLD,"Krzywa grzewcza",curve,M_CURVE);
             body.addView(section("Parametry"));
         }else{
             int hero=tab.equals("Gaz")?M_GAS_TODAY:tab.equals("Prąd")?4:19;
             list.remove(Integer.valueOf(hero));
+            if(tab.equals("Serwis"))renderAlarms();
             heroCard(hero,accent);
             body.addView(section(tab.equals("Serwis")?"Stan urządzenia":"Szczegóły"));
         }
         grid(list,accent);
-        String note=tab.equals("Gaz")?"Zużycie szacowane z pracy kotła.":tab.equals("Prąd")?"Dane Taurona mogą być opóźnione.":tab.equals("Serwis")?"Ta wersja nie wysyła powiadomień w tle.":"Aplikacja tylko odczytuje dane — nie zmienia nastaw kotła.";
+        String note=tab.equals("Gaz")?"Zużycie szacowane z pracy kotła.":tab.equals("Prąd")?"Dane Taurona mogą być opóźnione.":tab.equals("Serwis")?"Ta wersja nie wysyła powiadomień w tle.":"Zielony znaczek przy kotle oznacza brak alarmów — dotknij go, aby przejść do Serwisu.";
         TextView n=text(note+" Dotknij kafelka, aby zobaczyć historię 24 h; przytrzymaj, aby wybrać czujnik.",12,MUTED);n.setPadding(dp(4),dp(4),dp(4),0);body.addView(n);
         updateCards();
     }
@@ -242,7 +679,7 @@ public class MainActivity extends Activity {
             bindMetric(c,i);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);
         }
-        if(list.size()%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        if(list.size()%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,-1,1));
     }
     private void renderDiagram(){
         LinearLayout frame=card();frame.setPadding(dp(10),dp(14),dp(10),dp(12));
@@ -250,10 +687,15 @@ public class MainActivity extends Activity {
         TextView t=bold("Instalacja",17,TEXT);head.addView(t,new LinearLayout.LayoutParams(0,-2,1));
         head.addView(text("Dotknij wartości",12,MUTED));
         frame.addView(head);
-        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_HOUSE,M_OUTSIDE,M_DHW);
+        diagram=new BoilerDiagram(this,M_BURNER,M_POWER,M_FLOW,M_FAN,M_PUMP,M_VALVE,M_RETURN,M_OUTSIDE,M_DHW,M_UFH_FLOW,M_CURVE_SET,M_DHW_SET);
         diagram.setListener(new BoilerDiagram.Listener(){
             public void onTap(int i){if(entity(i).isEmpty())chooseMetric(i);else history(i);}
-            public void onLongPress(int i){chooseMetric(i);}
+            public void onLongPress(int i){
+                if(i==M_UFH_FLOW){new AlertDialog.Builder(MainActivity.this).setTitle("Podłogówka").setItems(new CharSequence[]{"Czujnik zasilania","Czujnik powrotu"},(d,w)->chooseMetric(w==0?M_UFH_FLOW:M_UFH_RET)).show();return;}
+                chooseMetric(i);}
+            public void onHealthTap(){tab="Serwis";prefs.edit().putString("tab",tab).apply();render();scroll.scrollTo(0,0);}
+            public void onRoomTap(String key){roomTap(key);}
+            public void onRoomLongPress(String key){roomMenu(key);}
         });
         frame.addView(diagram,new LinearLayout.LayoutParams(-1,-2));
         addFull(body,frame,12);
@@ -274,6 +716,8 @@ public class MainActivity extends Activity {
         String state=s.optString("state","");
         if(state.equals("unknown")||state.equals("unavailable")||state.isEmpty())return "—";
         if(i==M_BURNER)return state.equals("on")?"działa":state.equals("off")?"postój":state;
+        // Zawór 3-drogowy: 100 % = CWU (ciepła woda), 0 % = CO (ogrzewanie)
+        if(i==M_VALVE)return valveOnDhw()?"CWU":"CO";
         if(state.equals("on"))return compact?"wł.":"Tak";if(state.equals("off"))return compact?"wył.":"Nie";
         JSONObject attrs=s.optJSONObject("attributes");String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
         try{double v=Double.parseDouble(state);if(unit.contains("m³")||unit.contains("m3"))return String.format(new Locale("pl","PL"),"%.2f",v)+" "+unit;
@@ -314,18 +758,26 @@ public class MainActivity extends Activity {
         if(gasToday!=null)gasToday.setText(shortValue(M_GAS_TODAY));
         for(int i:ON_DIAGRAM)diagram.setValue(i,shortValue(i));
         boolean burner=burnerOn();
-        diagram.setState(burner,pumpSpeed(burner),fanSpeed(burner));
+        diagram.setState(burner,pumpSpeed(burner),fanSpeed(burner),valveOnDhw());
+        String uf=entity(M_UFH_FLOW).isEmpty()?"":shortValue(M_UFH_FLOW),ur=entity(M_UFH_RET).isEmpty()?"":shortValue(M_UFH_RET);
+        // pary „teraz / zadana” przy kotle (zadana z krzywej) i zasobniku CWU
+        diagram.setValue(M_CURVE_SET,entity(M_CURVE_SET).isEmpty()?"—":shortValue(M_CURVE_SET));
+        double[] dhwInfo=ctlInfo(entity(M_DHW_SET));
+        diagram.setValue(M_DHW_SET,dhwInfo==null?"—":String.format(new Locale("pl","PL"),dhwInfo[0]==Math.rint(dhwInfo[0])?"%.0f°":"%.1f°",dhwInfo[0]));
+        diagram.setValue(M_UFH_FLOW,uf.isEmpty()&&ur.isEmpty()?"podłogówka — wybierz czujnik":"podłoga"+(uf.isEmpty()?"":" ↑"+uf)+(ur.isEmpty()?"":" ↓"+ur));
+        updateDiagramRooms();
+        diagram.setHealth(healthLevel());
     }
     private void updateCards(){
-        updateRooms();updateDiagram();updateHero();
+        updateRooms();updateDiagram();updateHero();updateAlarms();updateControls();
         for(Integer i:values.keySet()){
             TextView val=values.get(i),sub=details.get(i);val.setTextColor(TEXT);
-            if(entity(i).isEmpty()){val.setText("Wybierz czujnik");val.setTextColor(GREEN);sub.setText("Dotknij, aby połączyć");continue;}
+            if(entity(i).isEmpty()){val.setText("Wybierz czujnik");val.setTextColor(GOLD);sub.setText("Dotknij, aby połączyć");continue;}
             JSONObject s=states.get(entity(i));String state=s==null?"":s.optString("state","");
             if(s==null||state.equals("unknown")||state.equals("unavailable")){val.setText("—");sub.setText(s==null?(states.isEmpty()?"Oczekiwanie na dane":"Brak encji — sprawdź identyfikator"):"Czujnik niedostępny");continue;}
             val.setText(value(i,false));
             // Statusy serwisowe: „on” oznacza problem lub potrzebę serwisu
-            if(entity(i).startsWith("binary_sensor.")&&metrics[i][0].equals("Serwis"))val.setTextColor(state.equals("on")?RED:GREEN);
+            if(entity(i).startsWith("binary_sensor.")&&metrics[i][0].equals("Serwis"))val.setTextColor(state.equals("on")?RED:OK);
             String date=s.optString("last_updated","");
             try{date=OffsetDateTime.parse(date).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM, HH:mm"));}catch(Exception ignored){}
             sub.setText("Aktualizacja "+date);
@@ -333,11 +785,15 @@ public class MainActivity extends Activity {
     }
 
     private void chooseMetric(int index){
+        pickEntity(metrics[index][1]+" — wybierz czujnik",id->id.startsWith("sensor.")||id.startsWith("binary_sensor.")||id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("input_boolean.")||id.startsWith("switch.")||id.startsWith("climate.")||id.startsWith("water_heater."),
+            id->{prefs.edit().putString("entity_"+index,id).apply();render();});
+    }
+    private void pickEntity(String title,java.util.function.Predicate<String> accept,java.util.function.Consumer<String> picked){
         if(states.isEmpty()){Toast.makeText(this,"Poczekaj na połączenie z Home Assistant",Toast.LENGTH_LONG).show();return;}
         LinearLayout form=column();form.setPadding(dp(16),dp(8),dp(16),0);
         EditText search=new EditText(this);search.setSingleLine(true);search.setHint("Szukaj: moc, power, pompa…");form.addView(search);
         ListView list=new ListView(this);form.addView(list,new LinearLayout.LayoutParams(-1,dp(320)));
-        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(id.startsWith("sensor.")||id.startsWith("binary_sensor.")||id.startsWith("number.")||id.startsWith("input_number.")||id.startsWith("input_boolean.")||id.startsWith("switch."))ids.add(id);
+        ArrayList<String> ids=new ArrayList<>();for(String id:states.keySet())if(accept.test(id))ids.add(id);
         Collections.sort(ids);ArrayList<String> shown=new ArrayList<>();
         ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<>());list.setAdapter(adapter);
         Runnable filter=()->{String q=search.getText().toString().toLowerCase(Locale.ROOT);shown.clear();adapter.clear();
@@ -345,8 +801,8 @@ public class MainActivity extends Activity {
                 if(label.toLowerCase(Locale.ROOT).contains(q)){shown.add(id);adapter.add(label);}}
         };filter.run();
         search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){filter.run();}public void afterTextChanged(android.text.Editable e){}});
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(metrics[index][1]+" — wybierz czujnik").setView(form).setNegativeButton("Anuluj",null).create();
-        list.setOnItemClickListener((parent,view,position,id)->{prefs.edit().putString("entity_"+index,shown.get(position)).apply();dialog.dismiss();render();});dialog.show();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(form).setNegativeButton("Anuluj",null).create();
+        list.setOnItemClickListener((parent,view,position,id)->{String chosen=shown.get(position);dialog.dismiss();picked.accept(chosen);});dialog.show();
     }
 
     private Set<String> selectedRooms(){
@@ -363,10 +819,17 @@ public class MainActivity extends Activity {
     private void renderRooms(){
         // Główny wskaźnik: temperatura w domu, zadana i zewnętrzna
         LinearLayout hero=card();hero.setPadding(dp(16),dp(18),dp(16),dp(18));hero.setGravity(Gravity.CENTER_HORIZONTAL);
-        ring=new Ring(this,GREEN,Color.rgb(232,238,241),TEXT,MUTED);hero.addView(ring,new LinearLayout.LayoutParams(-1,-2));
+        ring=new Ring(this,GOLD,Color.rgb(30,42,64),TEXT,MUTED);hero.addView(ring,new LinearLayout.LayoutParams(-1,-2));
         ring.setOnClickListener(v->{if(entity(M_HOUSE).isEmpty())chooseMetric(M_HOUSE);else history(M_HOUSE);});
+        // Sterowanie temperaturą zadaną: − / +
+        LinearLayout ctl=row();ctl.setGravity(Gravity.CENTER);ctl.setPadding(0,dp(4),0,dp(6));
+        Ctl set=ctl("set",()->entity(M_SET),"°C",()->chooseMetric(M_SET));
+        ctl.addView(roundButton("−",52,()->adjustCtl(set,-1),set.choose));
+        TextView ctlLabel=text("Temperatura zadana",13,MUTED);ctlLabel.setGravity(Gravity.CENTER);ctlLabel.setPadding(dp(16),0,dp(16),0);ctl.addView(ctlLabel);
+        ctl.addView(roundButton("+",52,()->adjustCtl(set,1),set.choose));
+        hero.addView(ctl);
         LinearLayout chips=row();chips.setGravity(Gravity.CENTER);chips.setPadding(0,dp(6),0,0);
-        LinearLayout c1=row();c1.setBackground(shape(BG,14));c1.setPadding(dp(10),dp(6),dp(12),dp(6));
+        LinearLayout c1=row();c1.setBackground(shape(BG,16));c1.setPadding(dp(10),dp(6),dp(12),dp(6));
         c1.addView(new Icon(this,Icon.THERMO,BLUE),new LinearLayout.LayoutParams(dp(16),dp(16)));
         heroOutside=text("Na zewnątrz —",13,TEXT);heroOutside.setPadding(dp(6),0,0,0);c1.addView(heroOutside);
         c1.setOnClickListener(v->{if(entity(M_OUTSIDE).isEmpty())chooseMetric(M_OUTSIDE);else history(M_OUTSIDE);});
@@ -377,35 +840,71 @@ public class MainActivity extends Activity {
         c2.setOnClickListener(v->{tab="Kocioł";prefs.edit().putString("tab",tab).apply();render();});
         LinearLayout.LayoutParams c2p=new LinearLayout.LayoutParams(-2,-2);c2p.leftMargin=dp(8);chips.addView(c2,c2p);
         hero.addView(chips);
-        addFull(body,hero,6);
-        // Pomieszczenia
-        LinearLayout sh=row();TextView st=section("Pomieszczenia");sh.addView(st,new LinearLayout.LayoutParams(0,-2,1));
-        TextView edit=bold("Edytuj",14,GREEN);edit.setPadding(dp(12),dp(10),dp(6),dp(10));edit.setOnClickListener(v->chooseRooms());sh.addView(edit);
+        addFull(body,hero,12);
+        // Ciepła woda użytkowa
+        Ctl dhw=ctl("dhw",()->entity(M_DHW_SET),"°C",()->chooseMetric(M_DHW_SET));
+        dhw.sub=()->{String in=entity(M_DHW).isEmpty()?"":"W zasobniku "+shortValue(M_DHW);
+            if(ctlInfo(entity(M_DHW_SET))==null)return (in.isEmpty()?"":in+" • ")+(states.isEmpty()?"Oczekiwanie na dane":"przytrzymaj −/+, aby wybrać nastawę");
+            return in.isEmpty()?"Temperatura zadana":in;};
+        controlCard(Icon.DROP,BLUE,"Ciepła woda (CWU)",dhw,M_DHW);
+        // Pomieszczenia — te same co na schemacie (przekrój domu), wg kondygnacji
+        body.addView(section("Pomieszczenia"));
+        String[][] floors={{"PIĘTRO 2","p2_kor","p2_laz","p2_mik","p2_adr","p2_cio"},{"PIĘTRO 1","p1_syp","p1_laz","p1_sal","p1_kor"},{"KLATKA SCHODOWA","klatka"}};
+        for(String[] f:floors){
+            TextView fh=text(f[0],11,MUTED);fh.setLetterSpacing(0.15f);fh.setPadding(dp(4),dp(2),0,dp(8));body.addView(fh);
+            LinearLayout fl=null;
+            for(int n=1;n<f.length;n++){
+                String key=f[n];int idx=n-1;boolean ed=slotEditable(key);
+                if(idx%2==0){fl=row();fl.setGravity(Gravity.TOP);addFull(body,fl,10);}
+                LinearLayout c=card();c.setPadding(dp(14),dp(12),dp(14),dp(12));
+                if(ed){GradientDrawable gd=shape(CARD,22);gd.setStroke(dp(1.5f),alpha(GOLD,190));c.setBackground(gd);}
+                TextView name=text(slotName(key),13,MUTED);name.setMaxLines(1);c.addView(name);
+                TextView val=text("—",24,TEXT);val.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));c.addView(val);
+                TextView sub=text("",12,ed?GOLD:MUTED);sub.setMaxLines(1);c.addView(sub);
+                slotViews.put(key,new TextView[]{name,val,sub});
+                c.setOnClickListener(v->roomTap(key));c.setOnLongClickListener(v->{roomMenu(key);return true;});
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(idx%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);fl.addView(c,lp);
+            }
+            if((f.length-1)%2==1&&fl!=null)fl.addView(new View(this),new LinearLayout.LayoutParams(0,-1,1));
+        }
+        // Inne czujniki spoza schematu (przycisk „Edytuj”)
+        Set<String> used=new HashSet<>();for(String key:BoilerDiagram.ROOM_KEYS)used.add(slotTemp(key));
+        ArrayList<String> extras=new ArrayList<>();for(String id:selectedRooms())if(!used.contains(id))extras.add(id);
+        LinearLayout sh=row();TextView st=section("Inne czujniki");sh.addView(st,new LinearLayout.LayoutParams(0,-2,1));
+        TextView edit=bold("Edytuj",14,GOLD);edit.setPadding(dp(12),dp(10),dp(6),dp(10));edit.setOnClickListener(v->chooseRooms());sh.addView(edit);
         body.addView(sh);
         LinearLayout line=null;int k=0;
-        for(String id:selectedRooms()){
+        for(String id:extras){
             if(k%2==0){line=row();line.setGravity(Gravity.TOP);addFull(body,line,12);}
             LinearLayout c=card();c.setMinimumHeight(dp(124));
-            c.addView(badge(id.startsWith("climate.")?Icon.GAUGE:Icon.HOME,GREEN,34));
+            c.addView(badge(id.startsWith("climate.")?Icon.GAUGE:Icon.HOME,GOLD,34));
             TextView name=text(roomName(id),13,MUTED);name.setPadding(0,dp(10),0,0);name.setMaxLines(2);c.addView(name);
             TextView value=text("—",26,TEXT);value.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));c.addView(value);
             TextView updated=text("Oczekiwanie na dane",11,MUTED);c.addView(updated);
+            // Nastawa grzejnika / termostatu: − zadana +
+            // Tylko gdy jest czym sterować (termostat albo wybrana nastawa); sam czujnik temperatury — bez −/+
+            boolean controlled=!roomTarget(id).isEmpty();
+            if(controlled){Ctl rc=ctl("room:"+id,()->roomTarget(id),"°",()->chooseRoomTarget(id));
+                LinearLayout r=ctlRow(rc,34,15,0);r.setPadding(0,dp(10),0,0);c.addView(r);}
             roomViews.put(id,new TextView[]{name,value,updated});
             c.setOnClickListener(v->history(id,roomName(id)));
-            c.setOnLongClickListener(v->{EditText label=new EditText(this);label.setText(roomName(id));label.setSingleLine(true);
-                new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();return true;});
+            c.setOnLongClickListener(v->{new AlertDialog.Builder(this).setTitle(roomName(id)).setItems(new CharSequence[]{"Zmień nazwę",controlled?"Ukryj sterowanie −/+":"Dodaj sterowanie −/+ (encja temperatury zadanej)"},(dd,which)->{
+                if(which==1){if(controlled){prefs.edit().putString("room_set_"+id,"-").apply();render();}else chooseRoomTarget(id);return;}
+                EditText label=new EditText(this);label.setText(roomName(id));label.setSingleLine(true);
+                new AlertDialog.Builder(this).setTitle("Nazwa pomieszczenia").setView(label).setPositiveButton("Zapisz",(d,w)->{prefs.edit().putString("room_name_"+id,label.getText().toString().trim()).apply();render();}).setNegativeButton("Anuluj",null).show();}).show();return true;});
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);if(k%2==0)lp.rightMargin=dp(6);else lp.leftMargin=dp(6);line.addView(c,lp);k++;
         }
-        if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
-        if(roomViews.isEmpty())body.addView(text("Dodaj czujniki przyciskiem „Edytuj”.",15,MUTED));
-        TextView help=text("Dotknij kafelka, aby zobaczyć historię 24 h. Przytrzymaj, aby zmienić nazwę.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
+        if(k%2==1&&line!=null)line.addView(new View(this),new LinearLayout.LayoutParams(0,-1,1));
+        if(roomViews.isEmpty())body.addView(text("Brak — dodaj czujniki przyciskiem „Edytuj”.",13,MUTED));
+        TextView help=text("Złota ramka: dotknij, aby zmienić temperaturę zadaną. Pozostałe: dotknij, aby zobaczyć historię 24 h. Przytrzymaj pomieszczenie, aby zmienić nazwę lub czujnik.",12,MUTED);help.setPadding(dp(4),dp(4),dp(4),0);body.addView(help);
     }
     private void updateHero(){
         if(ring==null)return;
         Locale pl=new Locale("pl","PL");
         String house=getTemperature(entity(M_HOUSE));double t=Double.NaN,set=Double.NaN;
         try{t=Double.parseDouble(house);}catch(Exception ignored){}
-        try{set=Double.parseDouble(entity(M_SET).isEmpty()||states.get(entity(M_SET))==null?"":states.get(entity(M_SET)).optString("state"));}catch(Exception ignored){}
+        Ctl sc=ctls.get("set");set=sc==null?Double.NaN:ctlValue(sc);
+        if(!Double.isFinite(set)){JSONObject s=entity(M_SET).isEmpty()?null:states.get(entity(M_SET));try{set=Double.parseDouble(s.optString("state"));}catch(Exception ignored){}}
         String value=Double.isFinite(t)?String.format(pl,"%.1f°",t):"—";
         String bottom=Double.isFinite(set)?String.format(pl,"Zadana %.1f°C",set):"Temperatura zadana —";
         ring.set(value,"W domu",bottom,Double.isFinite(t)?(float)((t-10)/20):0,Double.isFinite(set)?(float)((set-10)/20):-1);
@@ -477,23 +976,23 @@ public class MainActivity extends Activity {
             try{
                 JSONArray array=new JSONArray(HaClient.get(url,t,"/api/states"));Map<String,JSONObject> fresh=new HashMap<>();
                 for(int i=0;i<array.length();i++){JSONObject s=array.getJSONObject(i);fresh.put(s.optString("entity_id"),s);}
-                handler.post(()->{busy=false;if(g!=generation||isDestroyed())return;states.clear();states.putAll(fresh);lastSuccess=java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));connection.setText("Połączono • odczyt "+lastSuccess);connection.setTextColor(TEXT);statusDot.setBackground(shape(GREEN,4));updateCards();});
+                handler.post(()->{busy=false;if(g!=generation||isDestroyed())return;states.clear();states.putAll(fresh);lastSuccess=java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));connection.setText("Połączono • odczyt "+lastSuccess);connection.setTextColor(TEXT);statusDot.setBackground(shape(OK,4));updateCards();});
             }catch(Exception e){final String msg=e.getMessage();handler.post(()->{busy=false;if(g!=generation||isDestroyed())return;connection.setText("Brak nowych danych • "+(lastSuccess.isEmpty()?"":("ostatni odczyt "+lastSuccess+"\n"))+(msg==null?"Sprawdź połączenie":msg));connection.setTextColor(RED);statusDot.setBackground(shape(RED,4));});}
         });
     }
     private EditText field(LinearLayout form,String label,String value,int type){
-        TextView l=text(label,14,Color.DKGRAY);l.setPadding(0,dp(10),0,0);form.addView(l);
-        EditText e=new EditText(this);e.setText(value);e.setTextColor(Color.BLACK);e.setTextSize(14);e.setSingleLine(true);e.setInputType(type);form.addView(e);return e;
+        TextView l=text(label,14,MUTED);l.setPadding(0,dp(10),0,0);form.addView(l);
+        EditText e=new EditText(this);e.setText(value);e.setTextColor(TEXT);e.setTextSize(14);e.setSingleLine(true);e.setInputType(type);form.addView(e);return e;
     }
     private void settings(){
         if(settingsOpen||isDestroyed())return;settingsOpen=true;
         ScrollView scroll=new ScrollView(this);LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(12));scroll.addView(form);
-        form.addView(text("Adres HA dostępny z telefonu. Poza domem użyj HTTPS lub VPN. Token wpisz wyłącznie tutaj.",14,Color.DKGRAY));
+        form.addView(text("Adres HA dostępny z telefonu. Poza domem użyj HTTPS lub VPN. Token wpisz wyłącznie tutaj.",14,MUTED));
         EditText url=field(form,"Adres Home Assistant",base,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
         url.setHint("https://twoj-adres-home-assistant");
         EditText secret=field(form,"Token długoterminowy — puste pole zachowuje zapisany", "",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        CheckBox http=new CheckBox(this);http.setText("Zezwalam na HTTP w zaufanej sieci (token nie jest szyfrowany podczas przesyłania)");http.setTextColor(Color.DKGRAY);http.setChecked(prefs.getBoolean("http",false));form.addView(http);
-        form.addView(text("Czujniki — popraw identyfikatory, jeśli Twoje encje mają inne nazwy.",14,Color.DKGRAY));
+        CheckBox http=new CheckBox(this);http.setText("Zezwalam na HTTP w zaufanej sieci (token nie jest szyfrowany podczas przesyłania)");http.setTextColor(MUTED);http.setChecked(prefs.getBoolean("http",false));form.addView(http);
+        form.addView(text("Czujniki — popraw identyfikatory, jeśli Twoje encje mają inne nazwy.",14,MUTED));
         Map<Integer,EditText> ids=new LinkedHashMap<>();for(int i=0;i<metrics.length;i++)if(i!=M_PUMP_OLD)ids.put(i,field(form,metrics[i][0]+" • "+metrics[i][1],entity(i),InputType.TYPE_CLASS_TEXT));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Połączenie i czujniki").setView(scroll).setPositiveButton("Zapisz",null).setNegativeButton("Anuluj",null).setNeutralButton("Wyloguj",null).create();
         dialog.setOnDismissListener(d->{settingsOpen=false;});dialog.show();
@@ -520,7 +1019,7 @@ public class MainActivity extends Activity {
         if(!configured){settings();return;}
         final String url=base,t=token;final int g=generation;
         LinearLayout content=column();content.setPadding(dp(16),dp(12),dp(16),dp(16));
-        TextView info=text("Pobieranie historii 24 h…",14,Color.DKGRAY);content.addView(info);
+        TextView info=text("Pobieranie historii 24 h…",14,MUTED);content.addView(info);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(label+" • 24 h").setView(content).setPositiveButton("Zamknij",null).create();dialog.show();
         worker.execute(()->{try{
             Instant from=Instant.now().minusSeconds(86400);
@@ -548,10 +1047,10 @@ public class MainActivity extends Activity {
         @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);float min=Float.MAX_VALUE,max=-Float.MAX_VALUE;
             for(float[] p:points){min=Math.min(min,p[1]);max=Math.max(max,p[1]);}if(max==min){max+=1;min-=1;}
             float left=65,top=25,right=getWidth()-15,bottom=getHeight()-40;if(right<=left)return;
-            paint.setColor(Color.GRAY);paint.setStrokeWidth(1);canvas.drawLine(left,top,left,bottom,paint);canvas.drawLine(left,bottom,right,bottom,paint);
+            paint.setColor(Color.rgb(154,164,181));paint.setStrokeWidth(1);canvas.drawLine(left,top,left,bottom,paint);canvas.drawLine(left,bottom,right,bottom,paint);
             paint.setTextSize(24);canvas.drawText(String.format(Locale.getDefault(),"%.1f",max),0,top+8,paint);canvas.drawText(String.format(Locale.getDefault(),"%.1f",min),0,bottom,paint);
             canvas.drawText("−24 h",left,bottom+30,paint);canvas.drawText("teraz",right-65,bottom+30,paint);
-            paint.setColor(Color.rgb(0,145,112));paint.setStrokeWidth(4);
+            paint.setColor(Color.rgb(245,184,46));paint.setStrokeWidth(4);
             float px=0,py=0;boolean first=true;
             for(float[] p:points){float x=left+Math.max(0,Math.min(86400,p[0]))/86400*(right-left);float y=bottom-(p[1]-min)/(max-min)*(bottom-top);
                 if(!first){canvas.drawLine(px,py,x,py,paint);canvas.drawLine(x,py,x,y,paint);}canvas.drawCircle(x,y,3,paint);first=false;px=x;py=y;}
