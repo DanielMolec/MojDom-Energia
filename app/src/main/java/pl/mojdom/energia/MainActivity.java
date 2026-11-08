@@ -716,6 +716,8 @@ public class MainActivity extends Activity {
         String state=s.optString("state","");
         if(state.equals("unknown")||state.equals("unavailable")||state.isEmpty())return "—";
         if(i==M_BURNER)return state.equals("on")?"działa":state.equals("off")?"postój":state;
+        // Zawór 3-drogowy: 100 % = CWU (ciepła woda), 0 % = CO (ogrzewanie)
+        if(i==M_VALVE)return valveOnDhw()?"CWU":"CO";
         if(state.equals("on"))return compact?"wł.":"Tak";if(state.equals("off"))return compact?"wył.":"Nie";
         JSONObject attrs=s.optJSONObject("attributes");String unit=attrs==null?"":attrs.optString("unit_of_measurement","");
         try{double v=Double.parseDouble(state);if(unit.contains("m³")||unit.contains("m3"))return String.format(new Locale("pl","PL"),"%.2f",v)+" "+unit;
