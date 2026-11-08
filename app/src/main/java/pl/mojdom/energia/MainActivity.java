@@ -295,9 +295,11 @@ public class MainActivity extends Activity {
         for(String id:states.keySet()){
             if(!id.startsWith("number.")&&!id.startsWith("input_number."))continue;
             String n=id.toLowerCase(Locale.ROOT);int sc=0;
+            if(n.contains("propon")||n.contains("prev"))continue; // np. input_number.e7c_proponowana_krzywa — nie jest wysyłana do regulatora
             if(n.contains("krzyw")||n.contains("curve"))sc=2;
             if(sc>0&&(n.contains("zadan")||n.contains("desired")||n.contains("temp")))sc=1;
             if(sc>0&&(n.contains("hc1")||n.contains("obieg")))sc++;
+            if(n.contains("heatcurve")||n.contains("heat_curve"))sc=5; // np. input_number.e7c_heatcurve → ebusd e7c HeatCurve
             if(sc>score){score=sc;best=id;}
         }
         return best;
@@ -310,7 +312,7 @@ public class MainActivity extends Activity {
             String n=id.toLowerCase(Locale.ROOT);int sc=0;
             if(id.startsWith("water_heater."))sc=5;
             else if(n.contains("hwctempdesired")||n.contains("hwc_temp_desired")||n.contains("dhw_target")||n.contains("dhw_setpoint"))sc=4;
-            else if((n.contains("cwu")||n.contains("dhw")||n.contains("hwc")||n.contains("ciepla_woda"))&&(n.contains("zadan")||n.contains("desired")||n.contains("target")||n.contains("set")))sc=3;
+            else if((n.contains("cwu")||n.contains("dhw")||n.contains("hwc")||n.contains("ciepla_woda"))&&(n.contains("zadan")||n.contains("desired")||n.contains("target")||n.contains("set")||n.contains("temp")))sc=3; // np. input_number.e7c_temperatura_cwu
             if(sc>score){score=sc;best=id;}
         }
         return best;
